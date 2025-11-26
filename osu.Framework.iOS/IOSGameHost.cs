@@ -11,6 +11,7 @@ using osu.Framework.Extensions;
 using osu.Framework.Extensions.ObjectExtensions;
 using osu.Framework.Graphics.Textures;
 using osu.Framework.Graphics.Video;
+using osu.Framework.Input;
 using osu.Framework.Input.Bindings;
 using osu.Framework.Input.Handlers;
 using osu.Framework.Input.Handlers.Mouse;
@@ -97,6 +98,15 @@ namespace osu.Framework.iOS
 
         public override VideoDecoder CreateVideoDecoder(Stream stream)
             => new IOSVideoDecoder(Renderer, stream);
+
+        public override IHapticHandler CreateHapticHandler()
+        {
+            // Only some iOS devices support haptics, so we need to check for support first.
+            if (IOSHapticHandler.SupportsHaptics)
+                return new IOSHapticHandler();
+
+            return new DefaultHapticHandler();
+        }
 
         protected override IEnumerable<InputHandler> CreateAvailableInputHandlers()
         {

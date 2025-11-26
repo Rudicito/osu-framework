@@ -770,6 +770,9 @@ namespace osu.Framework.Platform
                 Dependencies.CacheAs(CreateTextInput());
                 Dependencies.CacheAs(CreateClipboard());
 
+                var hapticHandler = CreateHapticHandler();
+                Dependencies.CacheAs(hapticHandler);
+
                 ExecutionState = ExecutionState.Running;
                 threadRunner.Start();
 
@@ -1521,6 +1524,8 @@ namespace osu.Framework.Platform
         /// <param name="stream">The <see cref="Stream"/> to decode.</param>
         /// <returns>An instance of <see cref="VideoDecoder"/> initialised with the given stream.</returns>
         public virtual VideoDecoder CreateVideoDecoder(Stream stream) => new VideoDecoder(Renderer, stream);
+
+        public virtual IHapticHandler CreateHapticHandler() => new DefaultHapticHandler();
 
         /// <summary>
         /// Creates the <see cref="ThreadRunner"/> to run the threads of this <see cref="GameHost"/>.
