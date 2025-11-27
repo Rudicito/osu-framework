@@ -7,7 +7,7 @@ namespace osu.Framework.Input
 {
     public class DefaultHapticHandler : IHapticHandler
     {
-        public void PlayButtonPress()
+        public void ButtonPress()
         {
             Logger.Log("[Haptic] Button Press");
         }
@@ -20,30 +20,42 @@ namespace osu.Framework.Input
         public void StartSlider(float intensity = 0.3f, float sharpness = 0.1f)
         {
             Logger.Log($"[Haptic] Slider Started (i {intensity} s {sharpness})");
+            UpdateIntensity(intensity);
+            UpdateSharpness(sharpness);
         }
 
         public void StopSlider()
         {
             Logger.Log("[Haptic] Slider Stopped (i 0.0)");
+            UpdateIntensity(0.0f);
         }
 
-        public void CreateContinuousPlayer(float defaultIntensity, float defaultSharpness)
+        public void CreateContinuousPlayer()
         {
+            Logger.Log("[Haptic] Created Continuous Player");
+            UpdateIntensity(0.0f);
+            UpdateSharpness(0.0f);
         }
 
-        public void UpdateIntensity(float intensity)
+        public void UpdateIntensity(float intensity, bool force = false)
         {
             Logger.Log($"[Haptic] Updated intensity (i {intensity})");
         }
 
-        public void UpdateSharpness(float sharpness)
+        public void UpdateSharpness(float sharpness, bool force = false)
         {
-            Logger.Log($"[Haptic] Updated sharpness to (s {sharpness})");
+            Logger.Log($"[Haptic] Updated sharpness (s {sharpness})");
         }
 
         public void ReleaseAll()
         {
             Logger.Log("[Haptic] Release All");
+            UpdateIntensity(0.0f);
+        }
+
+        public void Crash(float intensity = 1, float sharpness = 1, float durationSeconds = 1)
+        {
+            Logger.Log("[Haptic] Crash");
         }
     }
 }

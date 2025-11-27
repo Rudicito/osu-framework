@@ -18,7 +18,7 @@ namespace osu.Framework.Input
         /// <summary>
         /// Generic button press haptic feedback.
         /// </summary>
-        void PlayButtonPress();
+        void ButtonPress();
 
         /// <summary>
         /// Helper to start a slider haptic effect. Ensures intensity and sharpness are correctly set.
@@ -31,14 +31,26 @@ namespace osu.Framework.Input
         void StopSlider();
 
         /// <summary>
-        /// Creates a continuous player for haptics. Should be called at the start of each Player session.
+        /// Creates a continuous player for haptics with 0 intensity and 0 sharpness.
+        /// Use <see cref="UpdateIntensity"/> and <see cref="UpdateSharpness"/> to modify.
+        /// Should be called at the start of each Player session.
         /// </summary>
-        void CreateContinuousPlayer(float defaultIntensity, float defaultSharpness);
+        void CreateContinuousPlayer();
 
-        void UpdateIntensity(float intensity);
+        void UpdateIntensity(float intensity, bool force = false);
 
-        void UpdateSharpness(float sharpness);
+        void UpdateSharpness(float sharpness, bool force = false);
 
         void ReleaseAll();
+
+        /// <summary>
+        /// Plays a crash haptic effect, a strong, sharp transient, and a rumble fading out.
+        /// Useful for signifying beginnings or ends of significant events, such as map start, or map fail.
+        /// Also useful if you want to extend the default button press haptic to something more significant.
+        /// </summary>
+        /// <param name="intensity"></param>
+        /// <param name="sharpness"></param>
+        /// <param name="durationSeconds"></param>
+        void Crash(float intensity = 1.0f, float sharpness = 1.0f, float durationSeconds = 1.0f);
     }
 }
