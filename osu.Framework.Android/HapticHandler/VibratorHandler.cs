@@ -7,7 +7,7 @@ using Android.App;
 using Android.Content;
 using Android.OS;
 
-namespace osu.Framework.Android.AndroidHapticHandler
+namespace osu.Framework.Android.HapticHandler
 {
     /// <summary>
     /// The handler of <see cref="Vibrator"/>, the legacy way to control vibration on Android.

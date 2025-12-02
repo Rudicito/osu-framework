@@ -4,7 +4,7 @@
 using System.Runtime.Versioning;
 using Android.OS;
 
-namespace osu.Framework.Android.AndroidHapticHandler
+namespace osu.Framework.Android.HapticHandler
 {
     [SupportedOSPlatform("android26.0")]
     public interface IAndroidHaptics
