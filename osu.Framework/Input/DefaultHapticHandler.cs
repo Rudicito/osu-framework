@@ -17,7 +17,7 @@ namespace osu.Framework.Input
             Logger.Log($"[Haptic] Playing Transient (i {intensity} s {sharpness})");
         }
 
-        public void StartSlider(float intensity = 0.3f, float sharpness = 0.1f)
+        public void StartContinuous(float intensity = 0.3f, float sharpness = 0.1f)
         {
             Logger.Log($"[Haptic] Slider Started (i {intensity} s {sharpness})");
             UpdateIntensity(intensity);
@@ -47,7 +47,7 @@ namespace osu.Framework.Input
             Logger.Log($"[Haptic] Updated sharpness (s {sharpness})");
         }
 
-        public void ReleaseAll()
+        public void ReleaseContinuous()
         {
             Logger.Log("[Haptic] Release All");
             UpdateIntensity(0.0f);
@@ -56,6 +56,36 @@ namespace osu.Framework.Input
         public void Crash(float intensity = 1, float sharpness = 1, float durationSeconds = 1)
         {
             Logger.Log("[Haptic] Crash");
+        }
+
+        public void SelectionChanged()
+        {
+            Logger.Log("[Haptic] Selection Changed");
+        }
+
+        public void SuccessNotification()
+        {
+            Logger.Log("[Haptic] Success Notification");
+        }
+
+        public void WarningNotification()
+        {
+            Logger.Log("[Haptic] Warning Notification");
+        }
+
+        public void ErrorNotification()
+        {
+            Logger.Log("[Haptic] Error Notification");
+        }
+
+        public void ToggleOn()
+        {
+            Logger.Log("[Haptic] Toggle On");
+        }
+
+        public void ToggleOff()
+        {
+            Logger.Log("[Haptic] Toggle Off");
         }
     }
 }

@@ -23,25 +23,13 @@ namespace osu.Framework.Input
         /// <summary>
         /// Helper to start a slider haptic effect. Ensures intensity and sharpness are correctly set.
         /// </summary>
-        void StartSlider(float intensity = DEFAULT_SLIDER_INTENSITY, float sharpness = DEFAULT_SLIDER_SHARPNESS);
-
-        /// <summary>
-        /// Helper to stop a slider haptic effect. Stops haptics and plays a transient to indicate the end.
-        /// </summary>
-        void StopSlider();
-
-        /// <summary>
-        /// Creates a continuous player for haptics with 0 intensity and 0 sharpness.
-        /// Use <see cref="UpdateIntensity"/> and <see cref="UpdateSharpness"/> to modify.
-        /// Should be called at the start of each Player session.
-        /// </summary>
-        void CreateContinuousPlayer();
+        void StartContinuous(float intensity = DEFAULT_SLIDER_INTENSITY, float sharpness = DEFAULT_SLIDER_SHARPNESS);
 
         void UpdateIntensity(float intensity, bool force = false);
 
         void UpdateSharpness(float sharpness, bool force = false);
 
-        void ReleaseAll();
+        void ReleaseContinuous();
 
         /// <summary>
         /// Plays a crash haptic effect, a strong, sharp transient, and a rumble fading out.
@@ -52,5 +40,15 @@ namespace osu.Framework.Input
         /// <param name="sharpness"></param>
         /// <param name="durationSeconds"></param>
         void Crash(float intensity = 1.0f, float sharpness = 1.0f, float durationSeconds = 1.0f);
+
+        void SelectionChanged();
+
+        void SuccessNotification();
+
+        void WarningNotification();
+
+        void ErrorNotification();
+        void ToggleOn();
+        void ToggleOff();
     }
 }
