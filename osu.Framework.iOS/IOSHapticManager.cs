@@ -5,48 +5,162 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using CoreHaptics;
+using Foundation;
+using osu.Framework.Graphics;
 using osu.Framework.Input;
 using osu.Framework.Logging;
 using osu.Framework.Utils;
 using UIKit;
-using static osu.Framework.Input.IHapticHandler;
 
-// TODO: Any documentation on methods here should be ported to IHapticHandler interface. For now, I'm leaving them here for my own reference.
+// TODO: Any documentation on methods here should be ported to HapticManager interface. For now, I'm leaving them here for my own reference.
 namespace osu.Framework.iOS
 {
     [SuppressMessage("Interoperability", "CA1422:Validate platform compatibility")]
-    public class IOSHapticHandler : IHapticHandler, IDisposable
+    public class IOSHapticManager : HapticManager, IDisposable
     {
-        private bool disposedValue;
-        private CHHapticEngine? engine;
-        private ICHHapticAdvancedPatternPlayer? continuousPlayer;
+        public static bool SupportsHaptics => CHHapticEngine.GetHardwareCapabilities().SupportsHaptics;
         private readonly UISelectionFeedbackGenerator selectionFeedbackGenerator = new UISelectionFeedbackGenerator();
         private readonly UIImpactFeedbackGenerator impactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Medium);
+        private readonly UINotificationFeedbackGenerator notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
         private readonly UIImpactFeedbackGenerator rigidImpactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Rigid);
         private readonly UIImpactFeedbackGenerator softImpactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Soft);
-        private readonly UINotificationFeedbackGenerator notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
 
         // !! WARNING !!
         // The values here do NOT do what you think they do! You should leave these as-is and only modify via dynamic parameters.
-
         // The intensity here is MULTIPLIED by the intensity set from dynamic parameters, effectively making this value a "maximum" intensity.
         private readonly CHHapticEventParameter intensityParameter = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, 1.0f);
 
         // Sharpness behaves differently - dynamic parameter values are ADDED to this base value, effectively making this value a "minimum" sharpness.
         private readonly CHHapticEventParameter sharpnessParameter = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, 0.0f);
 
+        private bool disposedValue;
+        private CHHapticEngine? engine;
+        private ICHHapticAdvancedPatternPlayer? continuousPlayer;
+
         private float storedIntensity = 1.0f;
         private float storedSharpness;
 
-        public static bool SupportsHaptics => CHHapticEngine.GetHardwareCapabilities().SupportsHaptics;
-
-        public IOSHapticHandler()
+        public IOSHapticManager()
         {
-            // TODO: Add user setting to disable haptics entirely.
-            if (SupportsHaptics)
+            HapticsEnabled.BindValueChanged(e =>
             {
-                createEngine();
-                selectionFeedbackGenerator.Prepare();
+                Logger.Log("[Haptic] Haptics Enabled changed to " + e.NewValue);
+
+                if (e.NewValue && SupportsHaptics)
+                {
+                    createEngine();
+                    selectionFeedbackGenerator.Prepare();
+                    impactFeedbackGenerator.Prepare();
+                    notificationFeedbackGenerator.Prepare();
+                    rigidImpactFeedbackGenerator.Prepare();
+                    softImpactFeedbackGenerator.Prepare();
+                }
+                else
+                {
+                    engine?.Stop(null);
+                    engine = null;
+                    continuousPlayer = null;
+                }
+            }, true);
+        }
+
+        public override void UpdateIntensity(float intensity, bool force = false)
+        {
+            if (engine == null)
+                return;
+
+            if (continuousPlayer == null)
+                throw new InvalidOperationException("Continuous haptic player is not initialized.");
+
+            base.UpdateIntensity(intensity, force);
+
+            if (!force && Math.Abs(storedIntensity - intensity) < Precision.FLOAT_EPSILON) return;
+
+            var param = new CHHapticDynamicParameter(
+                CHHapticDynamicParameterId.HapticIntensityControl,
+                intensity,
+                0
+            );
+
+            continuousPlayer.Send(
+                [param],
+                0,
+                out NSError? updateIntensityErr
+            );
+
+            if (updateIntensityErr != null)
+                throw new InvalidOperationException("Failed to update intensity: " + updateIntensityErr.LocalizedDescription);
+
+            storedIntensity = intensity;
+        }
+
+        public override void UpdateSharpness(float sharpness, bool force = false)
+        {
+            if (engine == null)
+                return;
+
+            if (continuousPlayer == null)
+                throw new InvalidOperationException("Continuous haptic player is not initialized.");
+
+            base.UpdateSharpness(sharpness, force);
+
+            if (!force && Math.Abs(storedSharpness - sharpness) < Precision.FLOAT_EPSILON)
+                return;
+
+            var param = new CHHapticDynamicParameter(
+                CHHapticDynamicParameterId.HapticSharpnessControl,
+                sharpness,
+                0
+            );
+
+            continuousPlayer.Send(
+                [param],
+                0,
+                out NSError? updateSharpnessErr
+            );
+
+            if (updateSharpnessErr != null)
+                throw new InvalidOperationException("Failed to update sharpness: " + updateSharpnessErr.LocalizedDescription);
+
+            storedSharpness = sharpness;
+        }
+
+        public override void PlayTransient(float intensityValue, float sharpnessValue)
+        {
+            if (engine == null)
+                return;
+
+            base.PlayTransient(intensityValue, sharpnessValue);
+
+            try
+            {
+                var intensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensityValue);
+                var sharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, sharpnessValue);
+
+                var hapticEvent = new CHHapticEvent(
+                    CHHapticEventType.HapticTransient,
+                    [intensity, sharpness],
+                    0
+                );
+
+                var pattern = new CHHapticPattern(new[] { hapticEvent }, Array.Empty<CHHapticDynamicParameter>(), out NSError? patternErr);
+
+                if (patternErr != null)
+                    throw new InvalidOperationException("Failed to create transient haptic pattern: " + patternErr.LocalizedDescription);
+
+                ICHHapticPatternPlayer? player = engine.CreatePlayer(pattern, out NSError? playerErr);
+
+                if (playerErr != null || player == null)
+                    throw new InvalidOperationException("Failed to create transient haptic player: " + playerErr?.LocalizedDescription);
+
+                player.Start(0, out NSError? startErr);
+
+                if (startErr != null)
+                    throw new InvalidOperationException("Failed to start transient haptic player: " + startErr.LocalizedDescription);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "[Haptic] Failed to play Transient");
             }
         }
 
@@ -102,9 +216,13 @@ namespace osu.Framework.iOS
             {
                 try
                 {
-                    engine = new CHHapticEngine(out _);
+                    engine = new CHHapticEngine(out NSError? engineErr);
 
-                    // Engine can stop for various reasons, so we need to be able to restart it automatically. If restarting fails after several attempts, we give up and disable haptics for the session.
+                    if (engineErr != null)
+                        throw new InvalidOperationException("Failed to create Haptic Engine: " + engineErr.LocalizedDescription);
+
+                    // Engine can stop for various reasons, so we need to be able to restart it automatically.
+                    // If restarting fails after several attempts, we give up and disable haptics for the session.
                     engine.StoppedHandler = reason =>
                     {
                         Logger.Log("Haptic Engine Stopped: " + reason);
@@ -116,7 +234,7 @@ namespace osu.Framework.iOS
                         catch
                         {
                             engine = null;
-                            Logger.Log("Stability of the Haptic Engine is compromised, disabling Haptics for the remainder of this session. Please restart the application to re-enable haptics.",
+                            Logger.Log("Stability of the Haptic Engine is compromised, disabling Haptics for the remainder of this session. Please restart osu! to re-enable haptics.",
                                 LoggingTarget.Runtime, LogLevel.Error);
                         }
                     };
@@ -133,12 +251,12 @@ namespace osu.Framework.iOS
                         catch
                         {
                             engine = null;
-                            Logger.Log("Stability of the Haptic Engine is compromised, disabling Haptics for the remainder of this session. Please restart the application to re-enable haptics.",
+                            Logger.Log("Stability of the Haptic Engine is compromised, disabling Haptics for the remainder of this session. Please restart osu! to re-enable haptics.",
                                 LoggingTarget.Runtime, LogLevel.Error);
                         }
                     };
 
-                    engine.Start(out var engineStartErr);
+                    engine.Start(out NSError? engineStartErr);
 
                     if (engineStartErr != null)
                         throw new InvalidOperationException("Failed to start Haptic Engine: " + engineStartErr.LocalizedDescription);
@@ -162,7 +280,8 @@ namespace osu.Framework.iOS
         /// </summary>
         private void createContinuousPlayer()
         {
-            if (engine == null) return;
+            if (engine == null)
+                return;
 
             var hapticEvent = new CHHapticEvent(
                 CHHapticEventType.HapticContinuous,
@@ -171,7 +290,11 @@ namespace osu.Framework.iOS
                 duration: 10.0f // Duration is effectively meaningless here since we loop the player indefinitely. Has a maximum of 30 seconds.
             );
 
-            var pattern = new CHHapticPattern([hapticEvent], Array.Empty<CHHapticDynamicParameter>(), out var patternErr);
+            var pattern = new CHHapticPattern(
+                [hapticEvent],
+                Array.Empty<CHHapticDynamicParameter>(),
+                out NSError? patternErr
+            );
 
             if (patternErr != null)
             {
@@ -180,7 +303,7 @@ namespace osu.Framework.iOS
                 return;
             }
 
-            continuousPlayer = engine.CreateAdvancedPlayer(pattern, out var contPlayerErr);
+            continuousPlayer = engine.CreateAdvancedPlayer(pattern, out NSError? contPlayerErr);
 
             if (contPlayerErr != null || continuousPlayer == null)
             {
@@ -195,7 +318,7 @@ namespace osu.Framework.iOS
             UpdateIntensity(0.0f, true);
             UpdateSharpness(0.0f, true);
 
-            continuousPlayer.Start(0, out var contPlayerStartErr);
+            continuousPlayer.Start(0, out NSError? contPlayerStartErr);
 
             if (contPlayerStartErr != null)
             {
@@ -207,127 +330,56 @@ namespace osu.Framework.iOS
             Logger.Log("Continuous Haptic Player created and started.");
         }
 
-        public void UpdateIntensity(float intensity, bool force = false)
-        {
-            // If the engine is not initialized, we simply ignore intensity updates.
-            if (engine == null)
-                return;
-
-            // Throw if we try to update intensity before the continuous player is created because this indicates a logic error rather than a runtime issue (i.e. haptics not being supported).
-            if (continuousPlayer == null)
-                throw new InvalidOperationException("Continuous haptic player is not initialized.");
-
-            if (intensity is < 0.0f or > 1.0f)
-                throw new ArgumentOutOfRangeException(nameof(intensity), "Intensity must be equal to or between 0.0 and 1.0");
-
-            if (!force && Math.Abs(storedIntensity - intensity) < Precision.FLOAT_EPSILON)
-                return;
-
-            var param = new CHHapticDynamicParameter(
-                CHHapticDynamicParameterId.HapticIntensityControl,
-                intensity,
-                0);
-
-            continuousPlayer.Send([
-                    param
-                ],
-                0,
-                out var updateIntensityErr);
-
-            if (updateIntensityErr != null)
-                throw new InvalidOperationException("Failed to update intensity: " + updateIntensityErr.LocalizedDescription);
-
-            storedIntensity = intensity;
-            Logger.Log($"[Haptic] Intensity Update: {intensity}");
-        }
-
-        public void UpdateSharpness(float sharpness, bool force = false)
-        {
-            if (engine == null)
-                return;
-
-            if (continuousPlayer == null)
-                throw new InvalidOperationException("Continuous haptic player is not initialized.");
-
-            if (sharpness is < 0.0f or > 1.0f)
-                throw new ArgumentOutOfRangeException(nameof(sharpness), "Intensity must be between 0.0 and 1.0");
-
-            if (!force && Math.Abs(storedSharpness - sharpness) < Precision.FLOAT_EPSILON)
-                return;
-
-            var param = new CHHapticDynamicParameter(
-                CHHapticDynamicParameterId.HapticSharpnessControl,
-                sharpness,
-                0);
-
-            continuousPlayer.Send([
-                    param
-                ],
-                0,
-                out var updateSharpnessErr);
-
-            if (updateSharpnessErr != null)
-                throw new InvalidOperationException("Failed to update sharpness: " + updateSharpnessErr.LocalizedDescription);
-
-            storedSharpness = sharpness;
-            Logger.Log($"[Haptic] Sharpness Update: {sharpness}");
-        }
-
         #region Helpers
 
-        public void StartContinuous(float initialIntensity = DEFAULT_SLIDER_INTENSITY, float initialSharpness = DEFAULT_SLIDER_SHARPNESS)
-        {
-            Logger.Log($"[Haptic] Slider Start (i {initialIntensity} s {initialSharpness})");
-            UpdateIntensity(initialIntensity);
-            UpdateSharpness(initialSharpness);
-        }
-
-        public void ButtonPress()
+        public override void ButtonPress()
         {
             Logger.Log("[Haptic] Button Press");
             impactFeedbackGenerator.ImpactOccurred();
         }
 
-        public void ToggleOn()
+        public override void ToggleOn()
         {
             Logger.Log("[Haptic] Toggle On");
             rigidImpactFeedbackGenerator.ImpactOccurred();
         }
 
-        public void ToggleOff()
+        public override void ToggleOff()
         {
             Logger.Log("[Haptic] Toggle Off");
             softImpactFeedbackGenerator.ImpactOccurred();
         }
 
-        public void SelectionChanged()
+        public override void SelectionChanged()
         {
             Logger.Log("[Haptic] Selection Changed");
             selectionFeedbackGenerator.SelectionChanged();
         }
 
-        public void SuccessNotification()
+        public override void SuccessNotification()
         {
             Logger.Log("[Haptic] Success Notification");
             notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Success);
         }
 
-        public void WarningNotification()
+        public override void WarningNotification()
         {
             Logger.Log("[Haptic] Warning Notification");
             notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Warning);
         }
 
-        public void ErrorNotification()
+        public override void ErrorNotification()
         {
             Logger.Log("[Haptic] Error Notification");
             notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Error);
         }
 
-        public void Crash(float intensity = 1.0f, float sharpness = 1.0f, float durationSeconds = 1.0f)
+        public override void Crash(float intensity = 1.0f, float sharpness = 1.0f, float durationSeconds = 1.0f)
         {
             if (engine == null) return;
-            if (durationSeconds <= 0) return;
+            if (durationSeconds == 0) return;
+
+            base.Crash(intensity, sharpness, durationSeconds);
 
             try
             {
@@ -336,24 +388,33 @@ namespace osu.Framework.iOS
                 var hitEvent = new CHHapticEvent(
                     CHHapticEventType.HapticTransient,
                     [transIntensity, transSharpness],
-                    0);
+                    0
+                );
 
-                var contIntensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, 0.5f);
-                var contSharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, 0.3f); // Lower sharpness for the "tail"
+                // We set the base intensity of the rumble to 50% so that it isn't as overwhelming as the transient hit.
+                var contIntensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensity * 0.5f);
+                var contSharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, 0.3f);
                 var rumbleEvent = new CHHapticEvent(
                     CHHapticEventType.HapticContinuous,
                     [contIntensity, contSharpness],
                     0,
-                    durationSeconds);
+                    durationSeconds
+                );
 
-                // easeOutSine Fade Out Curve
-                const int point_count = 10;
+                // Since control points are linear, we need to create multiple points to simulate an ease-out curve
+                // After some research, it seems like 16 points is the maximum before the engine starts ignoring extra points
+                const int point_count = 16;
                 var curvePoints = new CHHapticParameterCurveControlPoint[point_count + 1];
 
                 for (int i = 0; i <= point_count; i++)
                 {
                     float time = durationSeconds * i / point_count;
-                    float value = (float)Math.Cos(i / (float)point_count * Math.PI / 2.0);
+
+                    // You might wonder why the value is from 1.0 to 0.0 instead of 0.5 to 0.0
+                    // This is because the curve modifies the base intensity of 0.5 set in the event parameter
+                    // So a value of 1.0 means "full 0.5 intensity", and 0.0 means "0 intensity"
+                    float value = (float)Interpolation.ValueAt(time, 1.0, 0.0, 0.0, durationSeconds, Easing.OutSine);
+
                     curvePoints[i] = new CHHapticParameterCurveControlPoint(time, value);
                 }
 
@@ -367,12 +428,21 @@ namespace osu.Framework.iOS
                 var patternWithCurve = new CHHapticPattern(
                     [hitEvent, rumbleEvent],
                     [fadeCurve],
-                    out _);
+                    out NSError? patternErr
+                );
 
-                var player = engine.CreatePlayer(patternWithCurve, out _);
-                player?.Start(0, out _);
+                if (patternErr != null)
+                    throw new InvalidOperationException("Failed to create HitAndFade haptic pattern: " + patternErr.LocalizedDescription);
 
-                Logger.Log($"[Haptic] Played HitAndFade ({durationSeconds}s)");
+                ICHHapticPatternPlayer? player = engine.CreatePlayer(patternWithCurve, out NSError? playerErr);
+
+                if (playerErr != null || player == null)
+                    throw new InvalidOperationException("Failed to create HitAndFade haptic player: " + playerErr?.LocalizedDescription);
+
+                player.Start(0, out NSError? startErr);
+
+                if (startErr != null)
+                    throw new InvalidOperationException("Failed to start HitAndFade haptic player: " + startErr.LocalizedDescription);
             }
             catch (Exception ex)
             {
@@ -380,26 +450,9 @@ namespace osu.Framework.iOS
             }
         }
 
-        /// <summary>
-        /// Creates a buzz haptic effect - a temporary strong rumble.
-        /// Ensure the duration is short to avoid discomfort.
-        /// </summary>
-        /// <param name="duration"></param>
-        /// <param name="intensity"></param>
-        /// <param name="sharpness"></param>
-        public void Buzz(float duration, float intensity = 1f, float sharpness = 1f)
-        {
-        }
-
         #endregion
 
-        public void ReleaseContinuous()
-        {
-            Logger.Log("[Haptic] Releasing continuous haptics");
-            // Currently only sets intensity to 0.
-            // Will have more use when lifecycle management is overhauled
-            UpdateIntensity(0.0f);
-        }
+        #region Disposal
 
         public void Dispose()
         {
@@ -412,41 +465,30 @@ namespace osu.Framework.iOS
             if (disposedValue)
                 return;
 
-            engine?.Stop(null);
-            engine = null;
-            continuousPlayer = null;
+            if (disposing)
+            {
+                engine?.Stop(null);
+                engine?.Dispose();
+                engine = null;
+
+                continuousPlayer?.Dispose();
+                continuousPlayer = null;
+
+                selectionFeedbackGenerator.Dispose();
+                impactFeedbackGenerator.Dispose();
+                notificationFeedbackGenerator.Dispose();
+                rigidImpactFeedbackGenerator.Dispose();
+                softImpactFeedbackGenerator.Dispose();
+            }
+
             disposedValue = true;
         }
 
-        public void PlayTransient(float intensityValue, float sharpnessValue)
+        ~IOSHapticManager()
         {
-            if (engine == null)
-                return;
-
-            if (intensityValue is < 0.0f or > 1.0f)
-                throw new ArgumentOutOfRangeException(nameof(intensityValue), "Intensity must be between 0.0 and 1.0");
-            if (sharpnessValue is < 0.0f or > 1.0f)
-                throw new ArgumentOutOfRangeException(nameof(sharpnessValue), "Sharpness must be between 0.0 and 1.0");
-
-            try
-            {
-                var intensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensityValue);
-                var sharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, sharpnessValue);
-
-                var hapticEvent = new CHHapticEvent(
-                    CHHapticEventType.HapticTransient,
-                    new[] { intensity, sharpness },
-                    0);
-
-                var pattern = new CHHapticPattern(new[] { hapticEvent }, Array.Empty<CHHapticDynamicParameter>(), out _);
-                var player = engine.CreatePlayer(pattern, out _);
-
-                player?.Start(0, out _);
-                Logger.Log($"[Haptic] Played Transient (i {intensityValue} s {sharpnessValue})");
-            }
-            catch
-            {
-            }
+            Dispose(false);
         }
+
+        #endregion
     }
 }
