@@ -3,24 +3,65 @@
 
 using System;
 using System.Diagnostics;
-using osu.Framework.Allocation;
-using osu.Framework.Bindables;
+using System.Runtime.Versioning;
 using osu.Framework.Configuration;
 using osu.Framework.Logging;
 
 namespace osu.Framework.Input
 {
+    // TODO: Make this disposable instead of the child classes having to implement their own disposal.
     public class HapticManager
     {
         private const float default_slider_intensity = 0.25f;
         private const float default_slider_sharpness = 0.1f;
 
-        protected Bindable<bool> HapticsEnabled = new Bindable<bool>(true);
+        /// <summary>
+        /// Whether the current platform supports haptics. This is not a check for whether haptics are enabled, just whether they are supported.
+        /// </summary>
+        public virtual bool SupportsHaptics => false;
 
-        [BackgroundDependencyLoader]
-        private void load(FrameworkConfigManager config)
+        // I tried using dependency injection for FrameworkConfigManager, but
+        // 1. this class isn't a drawable, so DI is largely unsupported.
+        // 2. due to the binding being done in the constructor, even if DI was possible, this would run before DI could inject the dependency, resulting in a null reference.
+        // So maybe this is the right approach? I dunno. Hopefully future me can figure this out.
+        protected HapticManager(FrameworkConfigManager config)
         {
-            HapticsEnabled = config.GetBindable<bool>(FrameworkSetting.HapticsEnabled);
+            config.GetBindable<bool>(FrameworkSetting.HapticsEnabled).BindValueChanged(e =>
+            {
+                if (e.NewValue)
+                    Initialize();
+                else
+                    Disable();
+            }, true);
+        }
+
+        /// <summary>
+        /// Initializes the haptic manager, setting up any necessary resources.
+        /// </summary>
+        protected virtual void Initialize()
+        {
+            Logger.Log("[Haptic] Initializing Haptic Manager");
+        }
+
+        /// <summary>
+        /// Disables the haptic manager, pausing haptic feedback but remaining ready for re-initialization.
+        /// Use <see cref="Initialize"/> to re-enable. Use Dispose to permanently disable and clean up resources.
+        /// </summary>
+        protected virtual void Disable()
+        {
+            Logger.Log("[Haptic] Disabled Haptic Manager");
+        }
+
+        /// <summary>
+        /// Prepares the iOS Taptic Engine to play a haptic event.
+        /// Calling this method before playing a haptic event puts the Taptic Engine in a ready state, reducing latency when the event is played.
+        /// This has no effect if called immediately before playing a haptic event, so it is recommended to call this method slightly in advance of when the haptic is expected to be played.
+        /// This only has effect on iOS devices when using the helper methods.
+        /// </summary>
+        [SupportedOSPlatform("ios")]
+        public virtual void PrepareHaptics()
+        {
+            Logger.Log("[Haptic] Prepared Haptics");
         }
 
         /// <summary>

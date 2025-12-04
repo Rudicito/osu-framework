@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using CoreHaptics;
 using Foundation;
+using osu.Framework.Configuration;
 using osu.Framework.Graphics;
 using osu.Framework.Input;
 using osu.Framework.Logging;
@@ -18,12 +19,11 @@ namespace osu.Framework.iOS
     [SuppressMessage("Interoperability", "CA1422:Validate platform compatibility")]
     public class IOSHapticManager : HapticManager, IDisposable
     {
-        public static bool SupportsHaptics => CHHapticEngine.GetHardwareCapabilities().SupportsHaptics;
-        private readonly UISelectionFeedbackGenerator selectionFeedbackGenerator = new UISelectionFeedbackGenerator();
-        private readonly UIImpactFeedbackGenerator impactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Medium);
-        private readonly UINotificationFeedbackGenerator notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
-        private readonly UIImpactFeedbackGenerator rigidImpactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Rigid);
-        private readonly UIImpactFeedbackGenerator softImpactFeedbackGenerator = new UIImpactFeedbackGenerator(UIImpactFeedbackStyle.Soft);
+        // TODO: This being static makes it insanely difficult to query haptic support in a cross-platform manner.
+        // But making it non-static means GameHost cannot query it without instantiating the manager first, which is also not ideal.
+        public override bool SupportsHaptics => CHHapticEngine.GetHardwareCapabilities().SupportsHaptics;
+
+        private UINotificationFeedbackGenerator? notificationFeedbackGenerator;
 
         // !! WARNING !!
         // The values here do NOT do what you think they do! You should leave these as-is and only modify via dynamic parameters.
@@ -40,28 +40,41 @@ namespace osu.Framework.iOS
         private float storedIntensity = 1.0f;
         private float storedSharpness;
 
-        public IOSHapticManager()
-        {
-            HapticsEnabled.BindValueChanged(e =>
-            {
-                Logger.Log("[Haptic] Haptics Enabled changed to " + e.NewValue);
+        public IOSHapticManager(FrameworkConfigManager configManager)
+            : base(configManager)
+        { }
 
-                if (e.NewValue && SupportsHaptics)
-                {
-                    createEngine();
-                    selectionFeedbackGenerator.Prepare();
-                    impactFeedbackGenerator.Prepare();
-                    notificationFeedbackGenerator.Prepare();
-                    rigidImpactFeedbackGenerator.Prepare();
-                    softImpactFeedbackGenerator.Prepare();
-                }
-                else
-                {
-                    engine?.Stop(null);
-                    engine = null;
-                    continuousPlayer = null;
-                }
-            }, true);
+        protected override void Initialize()
+        {
+            base.Initialize();
+
+            if (!SupportsHaptics)
+            {
+                Logger.Log("Haptics not supported on this device.");
+                return;
+            }
+
+            if (engine == null)
+                createEngine();
+            else
+                _ = restartEngine();
+
+            notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
+        }
+
+        protected override void Disable()
+        {
+            base.Disable();
+
+            // Dispose the continuous player to allow the Taptic Engine to fully power down.
+            continuousPlayer?.Dispose();
+            continuousPlayer = null;
+
+            engine?.Stop(null);
+
+            // Dispose feedback generators to free up resources and prevent their continued use.
+            notificationFeedbackGenerator?.Dispose();
+            notificationFeedbackGenerator = null;
         }
 
         public override void UpdateIntensity(float intensity, bool force = false)
@@ -99,6 +112,7 @@ namespace osu.Framework.iOS
             if (engine == null)
                 return;
 
+            // If the continuous player is not initialized, that indicates a serious issue with the haptic engine, we should not silently fail here.
             if (continuousPlayer == null)
                 throw new InvalidOperationException("Continuous haptic player is not initialized.");
 
@@ -120,7 +134,10 @@ namespace osu.Framework.iOS
             );
 
             if (updateSharpnessErr != null)
-                throw new InvalidOperationException("Failed to update sharpness: " + updateSharpnessErr.LocalizedDescription);
+            {
+                Logger.Log("Failed to update sharpness: " + updateSharpnessErr.LocalizedDescription, LoggingTarget.Runtime, LogLevel.Error);
+                return;
+            }
 
             storedSharpness = sharpness;
         }
@@ -132,36 +149,51 @@ namespace osu.Framework.iOS
 
             base.PlayTransient(intensityValue, sharpnessValue);
 
-            try
+            var intensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensityValue);
+            var sharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, sharpnessValue);
+
+            var hapticEvent = new CHHapticEvent(
+                CHHapticEventType.HapticTransient,
+                [intensity, sharpness],
+                0
+            );
+
+            var pattern = new CHHapticPattern(
+                [hapticEvent],
+                Array.Empty<CHHapticDynamicParameter>(),
+                out NSError? patternErr
+            );
+
+            if (patternErr != null)
             {
-                var intensity = new CHHapticEventParameter(CHHapticEventParameterId.HapticIntensity, intensityValue);
-                var sharpness = new CHHapticEventParameter(CHHapticEventParameterId.HapticSharpness, sharpnessValue);
-
-                var hapticEvent = new CHHapticEvent(
-                    CHHapticEventType.HapticTransient,
-                    [intensity, sharpness],
-                    0
-                );
-
-                var pattern = new CHHapticPattern(new[] { hapticEvent }, Array.Empty<CHHapticDynamicParameter>(), out NSError? patternErr);
-
-                if (patternErr != null)
-                    throw new InvalidOperationException("Failed to create transient haptic pattern: " + patternErr.LocalizedDescription);
-
-                ICHHapticPatternPlayer? player = engine.CreatePlayer(pattern, out NSError? playerErr);
-
-                if (playerErr != null || player == null)
-                    throw new InvalidOperationException("Failed to create transient haptic player: " + playerErr?.LocalizedDescription);
-
-                player.Start(0, out NSError? startErr);
-
-                if (startErr != null)
-                    throw new InvalidOperationException("Failed to start transient haptic player: " + startErr.LocalizedDescription);
+                Logger.Log("Failed to create transient haptic pattern: " + patternErr.LocalizedDescription, LoggingTarget.Runtime, LogLevel.Error);
+                return;
             }
-            catch (Exception ex)
+
+            // This method creates a one-shot player that plays the transient haptic and then disposes itself.
+            // Players are lightweight, so creating and disposing them frequently is not an issue.
+            // The main issue here is the latency introduced by creating a new player each time.
+            // If we want to reuse players, we forfeit the ability to adjust intensity/sharpness per transient event.
+            // It would be wise to benchmark both methods and see just how much latency is introduced by creating a new player each time.
+            // See https://developer.apple.com/documentation/corehaptics/playing-a-single-tap-haptic-pattern?language=objc
+            ICHHapticPatternPlayer? player = engine.CreatePlayer(pattern, out NSError? playerErr);
+
+            if (playerErr != null || player == null)
             {
-                Logger.Error(ex, "[Haptic] Failed to play Transient");
+                Logger.Log("Failed to create transient haptic player: " + playerErr?.LocalizedDescription, LoggingTarget.Runtime, LogLevel.Error);
+                return;
             }
+
+            player.Start(0, out NSError? startErr);
+
+            if (startErr != null)
+            {
+                Logger.Log("Failed to start transient haptic player: " + startErr.LocalizedDescription, LoggingTarget.Runtime, LogLevel.Error);
+                return;
+            }
+
+            // TODO: Maybe should asynchronously dispose the player after some delay to ensure the haptic has finished playing?
+            player.Dispose();
         }
 
         /// <summary>
@@ -172,14 +204,17 @@ namespace osu.Framework.iOS
         /// <exception cref="InvalidOperationException"></exception>
         private async Task restartEngine(bool retry = true, int maxAttempts = 10)
         {
+            if (engine == null)
+                throw new InvalidOperationException("Haptic Engine is not initialized.");
+
             int attempt = 0;
+
+            // Dispose the existing continuous player, we'll recreate it after the engine restarts
+            continuousPlayer?.Dispose();
             continuousPlayer = null;
 
             while (true)
             {
-                if (engine == null)
-                    throw new InvalidOperationException("Haptic Engine is not initialized.");
-
                 engine.Start(out var restartErr);
 
                 if (restartErr != null)
@@ -191,8 +226,6 @@ namespace osu.Framework.iOS
                         throw new InvalidOperationException("Haptic Engine restart failed after 10 attempts, giving up. Fail reason: " + restartErr.LocalizedDescription);
 
                     Logger.Log($"Haptic Engine restart failed, attempt {attempt}, trying again...");
-
-                    await Task.Delay(1000).ConfigureAwait(false);
 
                     attempt += 1;
                     continue;
@@ -208,7 +241,7 @@ namespace osu.Framework.iOS
         }
 
         /// <summary>
-        /// Creates and starts the haptic engine. Should be called once at app start.
+        /// Creates and starts the haptic engine
         /// </summary>
         private void createEngine()
         {
@@ -221,7 +254,7 @@ namespace osu.Framework.iOS
                     if (engineErr != null)
                         throw new InvalidOperationException("Failed to create Haptic Engine: " + engineErr.LocalizedDescription);
 
-                    // Engine can stop for various reasons, so we need to be able to restart it automatically.
+                    // Engine can stop for various external reasons, so we need to be able to restart it automatically if that is the case
                     // If restarting fails after several attempts, we give up and disable haptics for the session.
                     engine.StoppedHandler = reason =>
                     {
@@ -255,6 +288,9 @@ namespace osu.Framework.iOS
                                 LoggingTarget.Runtime, LogLevel.Error);
                         }
                     };
+
+                    // We don't plan to play any audio through the haptic engine, so mute it to lower latency for haptics.
+                    engine.PlaysHapticsOnly = true;
 
                     engine.Start(out NSError? engineStartErr);
 
@@ -332,52 +368,31 @@ namespace osu.Framework.iOS
 
         #region Helpers
 
-        public override void ButtonPress()
-        {
-            Logger.Log("[Haptic] Button Press");
-            impactFeedbackGenerator.ImpactOccurred();
-        }
-
-        public override void ToggleOn()
-        {
-            Logger.Log("[Haptic] Toggle On");
-            rigidImpactFeedbackGenerator.ImpactOccurred();
-        }
-
-        public override void ToggleOff()
-        {
-            Logger.Log("[Haptic] Toggle Off");
-            softImpactFeedbackGenerator.ImpactOccurred();
-        }
-
-        public override void SelectionChanged()
-        {
-            Logger.Log("[Haptic] Selection Changed");
-            selectionFeedbackGenerator.SelectionChanged();
-        }
-
         public override void SuccessNotification()
         {
             Logger.Log("[Haptic] Success Notification");
-            notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Success);
+            notificationFeedbackGenerator?.NotificationOccurred(UINotificationFeedbackType.Success);
         }
 
         public override void WarningNotification()
         {
             Logger.Log("[Haptic] Warning Notification");
-            notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Warning);
+            notificationFeedbackGenerator?.NotificationOccurred(UINotificationFeedbackType.Warning);
         }
 
         public override void ErrorNotification()
         {
             Logger.Log("[Haptic] Error Notification");
-            notificationFeedbackGenerator.NotificationOccurred(UINotificationFeedbackType.Error);
+            notificationFeedbackGenerator?.NotificationOccurred(UINotificationFeedbackType.Error);
         }
 
         public override void Crash(float intensity = 1.0f, float sharpness = 1.0f, float durationSeconds = 1.0f)
         {
-            if (engine == null) return;
-            if (durationSeconds == 0) return;
+            if (engine == null)
+                return;
+
+            if (durationSeconds == 0)
+                return;
 
             base.Crash(intensity, sharpness, durationSeconds);
 
@@ -467,18 +482,9 @@ namespace osu.Framework.iOS
 
             if (disposing)
             {
-                engine?.Stop(null);
+                Disable();
                 engine?.Dispose();
                 engine = null;
-
-                continuousPlayer?.Dispose();
-                continuousPlayer = null;
-
-                selectionFeedbackGenerator.Dispose();
-                impactFeedbackGenerator.Dispose();
-                notificationFeedbackGenerator.Dispose();
-                rigidImpactFeedbackGenerator.Dispose();
-                softImpactFeedbackGenerator.Dispose();
             }
 
             disposedValue = true;
