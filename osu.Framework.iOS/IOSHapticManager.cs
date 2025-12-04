@@ -3,7 +3,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading.Tasks;
 using CoreHaptics;
 using Foundation;
 using osu.Framework.Configuration;
@@ -57,7 +56,7 @@ namespace osu.Framework.iOS
             if (engine == null)
                 createEngine();
             else
-                _ = restartEngine();
+                restartEngine();
 
             notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
         }
@@ -202,7 +201,7 @@ namespace osu.Framework.iOS
         /// <param name="retry">Whether to retry and gracefully fail, or to throw an exception if the first kickstart attempt is unsuccessful</param>
         /// <param name="maxAttempts">The maximum number of attempts</param>
         /// <exception cref="InvalidOperationException"></exception>
-        private async Task restartEngine(bool retry = true, int maxAttempts = 10)
+        private void restartEngine(bool retry = true, int maxAttempts = 10)
         {
             if (engine == null)
                 throw new InvalidOperationException("Haptic Engine is not initialized.");
@@ -262,7 +261,7 @@ namespace osu.Framework.iOS
 
                         try
                         {
-                            _ = restartEngine();
+                            restartEngine();
                         }
                         catch
                         {
@@ -279,7 +278,7 @@ namespace osu.Framework.iOS
 
                         try
                         {
-                            _ = restartEngine();
+                            restartEngine();
                         }
                         catch
                         {
