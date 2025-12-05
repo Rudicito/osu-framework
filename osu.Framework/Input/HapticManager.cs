@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using osu.Framework.Bindables;
 using osu.Framework.Configuration;
 using osu.Framework.Logging;
 
@@ -20,13 +21,17 @@ namespace osu.Framework.Input
         /// </summary>
         public virtual bool SupportsHaptics => false;
 
+        protected Bindable<bool> HapticsEnabled { get; set; }
+
         // I tried using dependency injection for FrameworkConfigManager, but
         // 1. this class isn't a drawable, so DI is largely unsupported.
         // 2. due to the binding being done in the constructor, even if DI was possible, this would run before DI could inject the dependency, resulting in a null reference.
         // So maybe this is the right approach? I dunno. Hopefully future me can figure this out.
         protected HapticManager(FrameworkConfigManager config)
         {
-            config.GetBindable<bool>(FrameworkSetting.HapticsEnabled).BindValueChanged(e =>
+            HapticsEnabled = config.GetBindable<bool>(FrameworkSetting.HapticsEnabled);
+
+            HapticsEnabled.BindValueChanged(e =>
             {
                 if (e.NewValue)
                     Initialize();
@@ -73,6 +78,9 @@ namespace osu.Framework.Input
         {
             Logger.Log($"[Haptic] Played Transient (i {intensity} s {sharpness})");
 
+            if (!HapticsEnabled.Value)
+                return;
+
             Debug.Assert(intensity is >= 0.0f and <= 1.0f);
             Debug.Assert(sharpness is >= 0.0f and <= 1.0f);
         }
@@ -86,6 +94,9 @@ namespace osu.Framework.Input
 
             Debug.Assert(intensity is >= 0.0f and <= 1.0f);
             Debug.Assert(sharpness is >= 0.0f and <= 1.0f);
+
+            if (!HapticsEnabled.Value)
+                return;
 
             UpdateIntensity(intensity);
             UpdateSharpness(sharpness);
@@ -102,6 +113,9 @@ namespace osu.Framework.Input
         {
             Logger.Log($"[Haptic] Intensity Update (i {intensity})");
 
+            if (!HapticsEnabled.Value)
+                return;
+
             Debug.Assert(intensity is >= 0.0f and <= 1.0f);
         }
 
@@ -117,6 +131,9 @@ namespace osu.Framework.Input
         {
             Logger.Log($"[Haptic] Sharpness Update: {sharpness}");
 
+            if (!HapticsEnabled.Value)
+                return;
+
             Debug.Assert(sharpness is >= 0.0f and <= 1.0f);
         }
 
@@ -126,11 +143,13 @@ namespace osu.Framework.Input
         public virtual void ButtonPress()
         {
             Logger.Log("[Haptic] Button Press");
+            PlayTransient(1.0f, 1.0f);
         }
 
         public virtual void SelectionChanged()
         {
             Logger.Log("[Haptic] Selection Changed");
+            PlayTransient(0.4f, 0.4f);
         }
 
         public virtual void SuccessNotification()
@@ -151,11 +170,13 @@ namespace osu.Framework.Input
         public virtual void ToggleOn()
         {
             Logger.Log("[Haptic] Toggle On");
+            PlayTransient(1.0f, 0.8f);
         }
 
         public virtual void ToggleOff()
         {
             Logger.Log("[Haptic] Toggle Off");
+            PlayTransient(1.0f, 0.4f);
         }
 
         /// <summary>

@@ -3,6 +3,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading.Tasks;
 using CoreHaptics;
 using Foundation;
 using osu.Framework.Configuration;
@@ -56,7 +57,7 @@ namespace osu.Framework.iOS
             if (engine == null)
                 createEngine();
             else
-                restartEngine();
+                _ = restartEngine();
 
             notificationFeedbackGenerator = new UINotificationFeedbackGenerator();
         }
@@ -201,7 +202,7 @@ namespace osu.Framework.iOS
         /// <param name="retry">Whether to retry and gracefully fail, or to throw an exception if the first kickstart attempt is unsuccessful</param>
         /// <param name="maxAttempts">The maximum number of attempts</param>
         /// <exception cref="InvalidOperationException"></exception>
-        private void restartEngine(bool retry = true, int maxAttempts = 10)
+        private async Task restartEngine(bool retry = true, int maxAttempts = 10)
         {
             if (engine == null)
                 throw new InvalidOperationException("Haptic Engine is not initialized.");
@@ -214,17 +215,22 @@ namespace osu.Framework.iOS
 
             while (true)
             {
-                engine.Start(out var restartErr);
-
-                if (restartErr != null)
+                try
+                {
+                    await engine.StartAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
                 {
                     if (!retry)
-                        throw new InvalidOperationException("Failed to restart Haptic Engine: " + restartErr.LocalizedDescription);
+                        throw new InvalidOperationException("Failed to restart Haptic Engine: " + ex);
 
                     if (attempt >= maxAttempts)
-                        throw new InvalidOperationException("Haptic Engine restart failed after 10 attempts, giving up. Fail reason: " + restartErr.LocalizedDescription);
+                        throw new InvalidOperationException("Haptic Engine restart failed after 10 attempts, giving up. Fail reason: " + ex);
 
-                    Logger.Log($"Haptic Engine restart failed, attempt {attempt}, trying again...");
+                    Logger.Log($"Haptic Engine restart failed, attempt {attempt + 1}, trying again...");
+                    Logger.Log("Reason: " + ex);
+
+                    await Task.Delay(1000).ConfigureAwait(false);
 
                     attempt += 1;
                     continue;
@@ -257,11 +263,11 @@ namespace osu.Framework.iOS
                     // If restarting fails after several attempts, we give up and disable haptics for the session.
                     engine.StoppedHandler = reason =>
                     {
-                        Logger.Log("Haptic Engine Stopped: " + reason);
+                        Logger.Log("[Haptic] Haptic Engine Stopped: " + reason);
 
                         try
                         {
-                            restartEngine();
+                            _ = restartEngine();
                         }
                         catch
                         {
@@ -278,10 +284,11 @@ namespace osu.Framework.iOS
 
                         try
                         {
-                            restartEngine();
+                            _ = restartEngine();
                         }
                         catch
                         {
+                            engine.Dispose();
                             engine = null;
                             Logger.Log("Stability of the Haptic Engine is compromised, disabling Haptics for the remainder of this session. Please restart osu! to re-enable haptics.",
                                 LoggingTarget.Runtime, LogLevel.Error);
@@ -304,6 +311,7 @@ namespace osu.Framework.iOS
                 catch (Exception ex)
                 {
                     Logger.Error(ex, "Failed to create Haptic Engine");
+                    engine?.Dispose();
                     engine = null;
                 }
             }
