@@ -1525,7 +1525,7 @@ namespace osu.Framework.Platform
         /// <returns>An instance of <see cref="VideoDecoder"/> initialised with the given stream.</returns>
         public virtual VideoDecoder CreateVideoDecoder(Stream stream) => new VideoDecoder(Renderer, stream);
 
-        public virtual IHapticHandler CreateHapticHandler() => new DefaultHapticHandler();
+        public virtual HapticManager CreateHapticHandler() => new DefaultHapticManager(Config);
 
         /// <summary>
         /// Creates the <see cref="ThreadRunner"/> to run the threads of this <see cref="GameHost"/>.

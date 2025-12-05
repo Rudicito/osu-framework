@@ -44,6 +44,7 @@ namespace osu.Framework.Configuration
             SetDefault(FrameworkSetting.Renderer, RendererType.Automatic);
             SetDefault(FrameworkSetting.ShowUnicode, false);
             SetDefault(FrameworkSetting.Locale, string.Empty);
+            SetDefault(FrameworkSetting.HapticsEnabled, true);
 
 #pragma warning disable 618
             SetDefault(FrameworkSetting.MapAbsoluteInputToWindow, false);
@@ -62,6 +63,7 @@ namespace osu.Framework.Configuration
             new TrackedSetting<FrameSync>(FrameworkSetting.FrameSync, v => new SettingDescription(v, "Frame Limiter", v.GetDescription(), "Ctrl+F7")),
             new TrackedSetting<string>(FrameworkSetting.AudioDevice, v => new SettingDescription(v, "Audio Device", string.IsNullOrEmpty(v) ? "Default" : v, v)),
             new TrackedSetting<bool>(FrameworkSetting.ShowLogOverlay, v => new SettingDescription(v, "Debug Logs", v ? "visible" : "hidden", "Ctrl+F10")),
+            new TrackedSetting<bool>(FrameworkSetting.HapticsEnabled, v => new SettingDescription(v, "Enable Haptics", v ? "enabled" : "disabled")),
             new TrackedSetting<Size>(FrameworkSetting.WindowedSize, v => new SettingDescription(v, "Screen resolution", $"{v.Width}x{v.Height}")),
             new TrackedSetting<WindowMode>(FrameworkSetting.WindowMode, v => new SettingDescription(v, "Screen Mode", v.ToString(), "Alt+Enter")),
 #pragma warning disable 618
@@ -116,5 +118,6 @@ namespace osu.Framework.Configuration
 
         [Obsolete("Input-related settings are now stored in InputConfigManager. Adjustments should be made via Host.AvailableInputHandlers bindables directly.")] // can be removed 20210911
         MapAbsoluteInputToWindow,
+        HapticsEnabled,
     }
 }

@@ -99,14 +99,7 @@ namespace osu.Framework.iOS
         public override VideoDecoder CreateVideoDecoder(Stream stream)
             => new IOSVideoDecoder(Renderer, stream);
 
-        public override IHapticHandler CreateHapticHandler()
-        {
-            // Only some iOS devices support haptics, so we need to check for support first.
-            if (IOSHapticHandler.SupportsHaptics)
-                return new IOSHapticHandler();
-
-            return new DefaultHapticHandler();
-        }
+        public override HapticManager CreateHapticHandler() => new IOSHapticManager(Config);
 
         protected override IEnumerable<InputHandler> CreateAvailableInputHandlers()
         {
