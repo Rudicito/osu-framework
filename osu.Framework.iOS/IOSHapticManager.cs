@@ -192,8 +192,10 @@ namespace osu.Framework.iOS
                 return;
             }
 
-            // TODO: Maybe should asynchronously dispose the player after some delay to ensure the haptic has finished playing?
-            player.Dispose();
+            // Dispose the player after a short delay to allow the haptic to play fully
+            Task.Delay(3000).ContinueWith(_ =>
+                player.Dispose()
+            );
         }
 
         /// <summary>
