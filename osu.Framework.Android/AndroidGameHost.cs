@@ -93,17 +93,7 @@ namespace osu.Framework.Android
         public override VideoDecoder CreateVideoDecoder(Stream stream)
             => new AndroidVideoDecoder(Renderer, stream);
 
-        public override IHapticHandler CreateHapticHandler()
-        {
-            var engine = AndroidHapticHandler.GetAndroidHaptics();
-
-            if (engine != null)
-            {
-                return new AndroidHapticHandler(engine);
-            }
-
-            return new DefaultHapticHandler();
-        }
+        public override HapticManager CreateHapticHandler() => new AndroidHapticHandler(Config);
 
         public override bool SuspendToBackground()
         {

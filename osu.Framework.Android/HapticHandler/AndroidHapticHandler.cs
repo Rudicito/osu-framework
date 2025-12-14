@@ -2,8 +2,9 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
-using System.Runtime.Versioning;
+using System.Diagnostics.CodeAnalysis;
 using Android.OS;
+using osu.Framework.Configuration;
 using osu.Framework.Graphics;
 using osu.Framework.Input;
 using osu.Framework.Logging;
@@ -11,12 +12,32 @@ using osu.Framework.Utils;
 
 namespace osu.Framework.Android.HapticHandler
 {
-    [SupportedOSPlatform("android26.0")]
-    public class AndroidHapticHandler : IHapticHandler
+    [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]
+    public class AndroidHapticHandler : HapticManager
     {
-        private readonly IAndroidHaptics engine;
+        public AndroidHapticHandler(FrameworkConfigManager config)
+            : base(config)
+        {
+        }
 
-        public static IAndroidHaptics? GetAndroidHaptics()
+        protected override void Initialize()
+        {
+            base.Initialize();
+
+            if (!SupportsHaptics)
+            {
+                Logger.Log("Haptics not supported on this device.");
+                return;
+            }
+
+            engine = getAndroidHaptics();
+        }
+
+        public override bool SupportsHaptics => engine?.SupportsHaptics() ?? false;
+
+        private IAndroidHaptics? engine;
+
+        private static IAndroidHaptics? getAndroidHaptics()
         {
             try
             {
@@ -37,75 +58,63 @@ namespace osu.Framework.Android.HapticHandler
             return null;
         }
 
-        public AndroidHapticHandler(IAndroidHaptics androidHaptics)
+        public override void PlayTransient(float intensity, float sharpness)
         {
-            engine = androidHaptics;
-        }
+            if (engine == null) return;
 
-        public void PlayTransient(float intensity, float sharpness)
-        {
+            base.PlayTransient(intensity, sharpness);
+
             int amplitude = GetAmplitude(intensity);
 
             if (amplitude == 0)
             {
-                ReleaseAll();
+                release();
                 return;
             }
 
             long[] timings = { 50 };
             int[] amplitudes = { amplitude };
 
-            ReleaseAll();
+            release();
             engine.Vibrate(VibrationEffect.CreateWaveform(timings, amplitudes, -1)!);
         }
 
-        public void ButtonPress() => PlayTransient(1.0f, 1.0f);
-
-        public void StartSlider(float intensity = IHapticHandler.DEFAULT_SLIDER_INTENSITY, float sharpness = IHapticHandler.DEFAULT_SLIDER_SHARPNESS)
+        public override void UpdateIntensity(float intensity, bool force = false)
         {
-            UpdateIntensity(intensity);
-            UpdateSharpness(sharpness);
-        }
+            if (engine == null) return;
 
-        public void StopSlider() => UpdateIntensity(0.0f);
+            base.UpdateIntensity(intensity, force);
 
-        public void CreateContinuousPlayer()
-        {
-            UpdateIntensity(0.0f);
-            UpdateSharpness(0.0f);
-        }
-
-        public void UpdateIntensity(float intensity, bool force = false)
-        {
             int amplitude = GetAmplitude(intensity);
 
             if (amplitude == 0)
             {
-                ReleaseAll();
+                release();
                 return;
             }
 
             long[] timings = { 1000 };
             int[] amplitudes = { amplitude };
 
-            ReleaseAll();
+            release();
             engine.Vibrate(VibrationEffect.CreateWaveform(timings, amplitudes, 0)!);
         }
 
         /// <remarks>
-        /// Do nothing because Sharpness is not an option on Android (can be recreated with custom amplitudes?)
+        /// Do nothing because Sharpness does not exist in on Android (can be recreated with custom amplitudes?)
         /// </remarks>
-        public void UpdateSharpness(float sharpness, bool force = false)
+        public override void UpdateSharpness(float sharpness, bool force = false)
         {
         }
 
-        public void ReleaseAll()
-        {
-            engine.Cancel();
-        }
+        private void release() => engine?.Cancel();
 
-        public void Crash(float intensity = 1, float sharpness = 1, float durationSeconds = 1)
+        public override void Crash(float intensity = 1, float sharpness = 1, float durationSeconds = 1)
         {
+            if (engine == null) return;
+
+            base.Crash(intensity, sharpness, durationSeconds);
+
             const int precision = 50;
 
             long durationMilliSeconds = (long)(durationSeconds * 1000f);
@@ -123,7 +132,7 @@ namespace osu.Framework.Android.HapticHandler
                 amplitudes[i] = GetAmplitude(intensity * t);
             }
 
-            ReleaseAll();
+            release();
             engine.Vibrate(VibrationEffect.CreateWaveform(timings, amplitudes, -1)!);
         }
 

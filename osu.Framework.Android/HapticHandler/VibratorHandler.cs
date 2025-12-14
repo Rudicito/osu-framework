@@ -39,5 +39,10 @@ namespace osu.Framework.Android.HapticHandler
         {
             engine.Cancel();
         }
+
+        public bool SupportsHaptics()
+        {
+            return engine.HasVibrator;
+        }
     }
 }

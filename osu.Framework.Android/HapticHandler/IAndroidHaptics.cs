@@ -12,5 +12,7 @@ namespace osu.Framework.Android.HapticHandler
         void Vibrate(VibrationEffect effect);
 
         void Cancel();
+
+        bool SupportsHaptics();
     }
 }
