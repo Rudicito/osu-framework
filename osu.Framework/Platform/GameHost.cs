@@ -71,7 +71,7 @@ namespace osu.Framework.Platform
 
         protected FrameworkDebugConfigManager DebugConfig { get; private set; }
 
-        protected FrameworkConfigManager Config { get; private set; }
+        public FrameworkConfigManager Config { get; private set; }
 
         private InputConfigManager inputConfig { get; set; }
 

@@ -92,6 +92,20 @@ namespace osu.Framework.Graphics.Video
 
         public delegate int SwsScaleDelegate(SwsContext* c, byte*[] srcSlice, int[] srcStride, int srcSliceY, int srcSliceH, byte*[] dst, int[] dstStride);
 
+        public delegate int AvcodecSendFrameDelegate(AVCodecContext* avctx, AVFrame* frame);
+
+        public delegate int AvcodecReceivePacketDelegate(AVCodecContext* avctx, AVPacket* avpkt);
+
+        public delegate int AvOptSetDelegate(void* obj, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [MarshalAs(UnmanagedType.LPUTF8Str)] string val, int search_flags);
+
+        public delegate int AvFrameMakeWritableDelegate(AVFrame* frame);
+
+        public delegate void AvPacketRescaleTsDelegate(AVPacket* pkt, AVRational tb_src, AVRational tb_dst);
+
+        public delegate int AvInterleavedWriteFrameDelegate(AVFormatContext* s, AVPacket* pkt);
+
+        public delegate AVStream* AvformatNewStreamDelegate(AVFormatContext* s, AVCodec* c);
+
         #endregion
 
         [CanBeNull]
@@ -136,6 +150,13 @@ namespace osu.Framework.Graphics.Video
         public SwsFreeContextDelegate sws_freeContext;
         public SwsGetCachedContextDelegate sws_getCachedContext;
         public SwsScaleDelegate sws_scale;
+        public AvcodecSendFrameDelegate avcodec_send_frame;
+        public AvcodecReceivePacketDelegate avcodec_receive_packet;
+        public AvOptSetDelegate av_opt_set;
+        public AvFrameMakeWritableDelegate av_frame_make_writable;
+        public AvPacketRescaleTsDelegate av_packet_rescale_ts;
+        public AvInterleavedWriteFrameDelegate av_interleaved_write_frame;
+        public AvformatNewStreamDelegate avformat_new_stream;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.

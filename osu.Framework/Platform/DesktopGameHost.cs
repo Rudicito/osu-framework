@@ -6,10 +6,13 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using osu.Framework.Configuration;
+using osu.Framework.Development;
 using osu.Framework.Extensions;
 using osu.Framework.Logging;
+using osu.Framework.Timing;
 
 namespace osu.Framework.Platform
 {
@@ -17,6 +20,8 @@ namespace osu.Framework.Platform
     {
         private NamedPipeIpcProvider ipcProvider;
         private readonly string ipcPipeName;
+
+        private FramedClock customClock;
 
         protected DesktopGameHost(string gameName, HostOptions options = null)
             : base(gameName, options)
@@ -46,11 +51,27 @@ namespace osu.Framework.Platform
             }
         }
 
+        protected override IFrameBasedClock SceneGraphClock
+            => customClock ?? base.SceneGraphClock;
+
+        protected override void UpdateFrame()
+        {
+            customClock?.ProcessFrame();
+            base.UpdateFrame();
+        }
+
         protected override void SetupForRun()
         {
             ensureIPCReady();
 
-            base.SetupForRun();
+            MaximumDrawHz = 0;
+
+            DebugUtils.RealtimeClock = new HeadlessGameHost.FastClock(HeadlessGameHost.CLOCK_RATE, Threads.ToArray());
+            customClock = new FramedClock(DebugUtils.RealtimeClock);
+
+            // time is incremented per frame, rather than based on the real-world time.
+            // therefore our goal is to run frames as fast as possible.
+            MaximumUpdateHz = MaximumInactiveHz = 0;
         }
 
         private void ensureIPCReady()

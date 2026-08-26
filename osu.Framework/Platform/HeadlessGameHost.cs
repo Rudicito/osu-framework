@@ -114,7 +114,7 @@ namespace osu.Framework.Platform
             DebugUtils.RealtimeClock = null;
         }
 
-        private class FastClock : IClock
+        public class FastClock : IClock
         {
             private readonly double increment;
 

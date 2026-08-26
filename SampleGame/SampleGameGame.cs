@@ -2,11 +2,13 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using osu.Framework;
+using osu.Framework.Allocation;
 using osu.Framework.Graphics;
 using osuTK;
 using osuTK.Graphics;
 using osu.Framework.Graphics.Shapes;
-using osu.Framework.Allocation;
+using osu.Framework.Configuration;
+using osu.Framework.Platform;
 
 namespace SampleGame
 {
@@ -24,12 +26,17 @@ namespace SampleGame
                 Size = new Vector2(150, 150),
                 Colour = Color4.Tomato
             });
+
+            Host.Config.SetValue(FrameworkSetting.ExecutionMode, ExecutionMode.SingleThread);
         }
 
         protected override void Update()
         {
             base.Update();
             box.Rotation += (float)Time.Elapsed / 10;
+
+            Host.MaximumUpdateHz = 0;
+            // Host.MaximumDrawHz = 60;
         }
     }
 }
