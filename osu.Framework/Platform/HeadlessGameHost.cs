@@ -20,7 +20,7 @@ namespace osu.Framework.Platform
     /// </summary>
     public class HeadlessGameHost : DesktopGameHost
     {
-        public const double CLOCK_RATE = 1000.0 / 30;
+        public const double CLOCK_RATE = 1000.0 / 60;
 
         private readonly bool realtime;
         private IFrameBasedClock? customClock;

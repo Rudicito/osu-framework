@@ -5,6 +5,7 @@ namespace osu.Framework.Render
 {
     public enum RenderFramerate
     {
+        Fps15,
         Fps30,
         Fps60,
         Fps120,

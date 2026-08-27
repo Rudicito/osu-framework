@@ -23,7 +23,7 @@ namespace osu.Framework.Render
         /// <summary>
         /// Number of frames we wait before calling the DrawThread.
         /// Skipping DrawThread speed up the render.
-        /// Based of the incremetedTime of the RenderClock.
+        /// Based of the incrementedTime of the RenderClock.
         /// For example: for 60 fps, since the incremented time is 1000 / 60 / 10 between frames,
         /// We juste need to wait 10 frame before calling the DrawThread, for making 60fps render.
         /// </summary>
@@ -34,6 +34,9 @@ namespace osu.Framework.Render
             {
                 switch (renderFramerate)
                 {
+                    case RenderFramerate.Fps15:
+                        return 40;
+
                     case RenderFramerate.Fps30:
                         return 20;
 
@@ -52,6 +55,8 @@ namespace osu.Framework.Render
         public override void RunMainLoop()
         {
             ExecutionMode = ExecutionMode.SingleThread;
+
+            EnsureCorrectExecutionMode();
 
             lock (InternalThreads)
             {

@@ -12,6 +12,8 @@ using osu.Framework.Configuration;
 using osu.Framework.Development;
 using osu.Framework.Extensions;
 using osu.Framework.Logging;
+using osu.Framework.Render;
+using osu.Framework.Threading;
 using osu.Framework.Timing;
 
 namespace osu.Framework.Platform
@@ -73,6 +75,8 @@ namespace osu.Framework.Platform
             // therefore our goal is to run frames as fast as possible.
             MaximumUpdateHz = MaximumInactiveHz = 0;
         }
+
+        protected override ThreadRunner CreateThreadRunner(InputThread mainThread) => new RenderThreadRunner(mainThread, RenderFramerate.Fps60);
 
         private void ensureIPCReady()
         {

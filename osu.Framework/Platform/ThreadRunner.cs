@@ -97,7 +97,7 @@ namespace osu.Framework.Platform
         public virtual void RunMainLoop()
         {
             // propagate any requested change in execution mode at a safe point in frame execution
-            ensureCorrectExecutionMode();
+            EnsureCorrectExecutionMode();
 
             Debug.Assert(activeExecutionMode != null);
 
@@ -123,7 +123,7 @@ namespace osu.Framework.Platform
             ThreadSafety.ResetAllForCurrentThread();
         }
 
-        public void Start() => ensureCorrectExecutionMode();
+        public void Start() => EnsureCorrectExecutionMode();
 
         public void Suspend()
         {
@@ -163,7 +163,7 @@ namespace osu.Framework.Platform
             ThreadSafety.ResetAllForCurrentThread();
         }
 
-        private void ensureCorrectExecutionMode()
+        protected void EnsureCorrectExecutionMode()
         {
             // locking is required as this method may be called from two different threads.
             lock (startStopLock)
