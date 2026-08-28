@@ -9,22 +9,22 @@ namespace osu.Framework.Graphics.Video
 {
     public unsafe class VideoEncoder : FFmpegComponent, IDisposable
     {
-        private AVStream* st;
-        private AVCodecContext* enc;
+        // private AVStream* st;
+        // private AVCodecContext* enc;
 
         /* pts of the next frame that will be generated */
-        long next_pts;
-        private int samples_count;
-
-        private AVFrame* frame;
-        private AVFrame* tmp_frame;
-
-        private AVPacket* tmpPkt;
-
-        private float t, tincr, tincr2;
-
-        SwsContext* sws_ctx;
-        SwrContext* swr_ctx;
+        // long next_pts;
+        // private int samples_count;
+        //
+        // private AVFrame* frame;
+        // private AVFrame* tmp_frame;
+        //
+        // private AVPacket* tmpPkt;
+        //
+        // private float t, tincr, tincr2;
+        //
+        // SwsContext* sws_ctx;
+        // SwrContext* swr_ctx;
 
         private bool writeFrame(AVFormatContext* fmtCtx, AVCodecContext* c, AVStream* st, AVFrame* frame, AVPacket* pkt)
         {
@@ -70,9 +70,30 @@ namespace osu.Framework.Graphics.Video
             return ret == FFmpegFuncs.AVERROR_EOF;
         }
 
-        private void add_stream(OutputStre)
-        {
+        // private AVFrame buildVideoFrame(Image<Rgba32> image)
+        // {
+        // }
 
+        private AVFrame* allocVideoFrame(AVPixelFormat pixFmt, int width, int height)
+        {
+            var frame = Ffmpeg.av_frame_alloc();
+            if (frame == null)
+                return null;
+
+            frame->format = (int)pixFmt;
+            frame->width = width;
+            frame->height = height;
+
+            // allocate the buffers for the frame data
+            int ret = Ffmpeg.av_frame_get_buffer(frame, 0);
+
+            if (ret < 0)
+            {
+                Ffmpeg.av_frame_free(&frame);
+                throw new InvalidOperationException("Could not allocate frame data.");
+            }
+
+            return frame;
         }
 
         // sws_scale for colour changes
