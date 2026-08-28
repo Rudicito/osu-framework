@@ -12,7 +12,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -22,14 +21,13 @@ using osu.Framework.Extensions.EnumExtensions;
 using osu.Framework.Graphics.Rendering;
 using osu.Framework.Logging;
 using osu.Framework.Platform;
-using osu.Framework.Platform.Linux.Native;
 
 namespace osu.Framework.Graphics.Video
 {
     /// <summary>
     /// Represents a video decoder that can be used convert video streams and files into textures.
     /// </summary>
-    public unsafe class VideoDecoder : IDisposable
+    public unsafe class VideoDecoder : FFmpegComponent, IDisposable
     {
         /// <summary>
         /// The duration of the video that is being decoded. Can only be queried after the decoder has started decoding has loaded. This value may be an estimate by FFmpeg, depending on the video loaded.
@@ -105,28 +103,7 @@ namespace osu.Framework.Graphics.Video
 
         private ObjectHandle<VideoDecoder> handle;
 
-        private readonly FFmpegFuncs ffmpeg;
-
         internal bool Looping;
-
-        static VideoDecoder()
-        {
-            if (RuntimeInfo.OS == RuntimeInfo.Platform.Linux)
-            {
-                void loadVersionedLibraryGlobally(string name)
-                {
-                    int version = FFmpeg.AutoGen.ffmpeg.LibraryVersionMap[name];
-                    Library.Load($"lib{name}.so.{version}", Library.LoadFlags.RTLD_LAZY | Library.LoadFlags.RTLD_GLOBAL);
-                }
-
-                // FFmpeg.AutoGen doesn't load libraries as RTLD_GLOBAL, so we must load them ourselves to fix inter-library dependencies
-                // otherwise they would fallback to the system-installed libraries that can differ in version installed.
-                loadVersionedLibraryGlobally("avutil");
-                loadVersionedLibraryGlobally("avcodec");
-                loadVersionedLibraryGlobally("avformat");
-                loadVersionedLibraryGlobally("swscale");
-            }
-        }
 
         /// <summary>
         /// Creates a new video decoder that decodes the given video file.
@@ -145,8 +122,6 @@ namespace osu.Framework.Graphics.Video
         /// <param name="videoStream">The stream that should be decoded.</param>
         public VideoDecoder(IRenderer renderer, Stream videoStream)
         {
-            ffmpeg = CreateFuncs();
-
             this.renderer = renderer;
             this.videoStream = videoStream;
             if (!videoStream.CanRead)
@@ -179,8 +154,8 @@ namespace osu.Framework.Graphics.Video
 
             decoderCommands.Enqueue(() =>
             {
-                ffmpeg.avcodec_flush_buffers(codecContext);
-                ffmpeg.av_seek_frame(formatContext, stream->index, (long)(targetTimestamp / timeBaseInSeconds / 1000.0), FFmpegFuncs.AVSEEK_FLAG_BACKWARD);
+                Ffmpeg.avcodec_flush_buffers(codecContext);
+                Ffmpeg.av_seek_frame(formatContext, stream->index, (long)(targetTimestamp / timeBaseInSeconds / 1000.0), FFmpegFuncs.AVSEEK_FLAG_BACKWARD);
                 skipOutputUntilTime = targetTimestamp;
                 State = DecoderState.Ready;
             });
@@ -344,32 +319,32 @@ namespace osu.Framework.Graphics.Video
             seekCallback = streamSeekCallbacks;
             // we shouldn't keep a reference to this buffer as it can be freed and replaced by the native libs themselves.
             // https://ffmpeg.org/doxygen/4.1/aviobuf_8c.html#a853f5149136a27ffba3207d8520172a5
-            byte* contextBuffer = (byte*)ffmpeg.av_malloc(context_buffer_size);
+            byte* contextBuffer = (byte*)Ffmpeg.av_malloc(context_buffer_size);
 
-            ioContext = ffmpeg.avio_alloc_context(contextBuffer, context_buffer_size, 0, (void*)handle.Handle, readPacketCallback, null, seekCallback);
+            ioContext = Ffmpeg.avio_alloc_context(contextBuffer, context_buffer_size, 0, (void*)handle.Handle, readPacketCallback, null, seekCallback);
 
-            var fcPtr = ffmpeg.avformat_alloc_context();
+            var fcPtr = Ffmpeg.avformat_alloc_context();
             formatContext = fcPtr;
             formatContext->pb = ioContext;
             formatContext->flags |= FFmpegFuncs.AVFMT_FLAG_GENPTS; // required for most HW decoders as they only read `pts`
 
             AVDictionary* options = null;
             // see https://github.com/ppy/osu/issues/13696 for reasoning
-            ffmpeg.av_dict_set?.Invoke(&options, "ignore_editlist", "1", 0);
-            int openInputResult = ffmpeg.avformat_open_input(&fcPtr, "pipe:", null, &options);
-            ffmpeg.av_dict_free?.Invoke(&options);
+            Ffmpeg.av_dict_set?.Invoke(&options, "ignore_editlist", "1", 0);
+            int openInputResult = Ffmpeg.avformat_open_input(&fcPtr, "pipe:", null, &options);
+            Ffmpeg.av_dict_free?.Invoke(&options);
 
             inputOpened = openInputResult >= 0;
             if (!inputOpened)
-                throw new InvalidOperationException($"Error opening file or stream: {getErrorMessage(openInputResult)}");
+                throw new InvalidOperationException($"Error opening file or stream: {GetErrorMessage(openInputResult)}");
 
-            int findStreamInfoResult = ffmpeg.avformat_find_stream_info(formatContext, null);
+            int findStreamInfoResult = Ffmpeg.avformat_find_stream_info(formatContext, null);
             if (findStreamInfoResult < 0)
-                throw new InvalidOperationException($"Error finding stream info: {getErrorMessage(findStreamInfoResult)}");
+                throw new InvalidOperationException($"Error finding stream info: {GetErrorMessage(findStreamInfoResult)}");
 
-            int streamIndex = ffmpeg.av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, null, 0);
+            int streamIndex = Ffmpeg.av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, null, 0);
             if (streamIndex < 0)
-                throw new InvalidOperationException($"Couldn't find video stream: {getErrorMessage(streamIndex)}");
+                throw new InvalidOperationException($"Couldn't find video stream: {GetErrorMessage(streamIndex)}");
 
             stream = formatContext->streams[streamIndex];
             timeBaseInSeconds = stream->time_base.GetValue();
@@ -395,10 +370,10 @@ namespace osu.Framework.Graphics.Video
                 if (codecContext != null)
                 {
                     fixed (AVCodecContext** ptr = &codecContext)
-                        ffmpeg.avcodec_free_context(ptr);
+                        Ffmpeg.avcodec_free_context(ptr);
                 }
 
-                codecContext = ffmpeg.avcodec_alloc_context3(decoder.Pointer);
+                codecContext = Ffmpeg.avcodec_alloc_context3(decoder.Pointer);
                 codecContext->pkt_timebase = stream->time_base;
 
                 if (codecContext == null)
@@ -407,33 +382,33 @@ namespace osu.Framework.Graphics.Video
                     continue;
                 }
 
-                int paramCopyResult = ffmpeg.avcodec_parameters_to_context(codecContext, &codecParams);
+                int paramCopyResult = Ffmpeg.avcodec_parameters_to_context(codecContext, &codecParams);
 
                 if (paramCopyResult < 0)
                 {
-                    Logger.Log($"Couldn't copy codec parameters from {decoder.Name}: {getErrorMessage(paramCopyResult)}");
+                    Logger.Log($"Couldn't copy codec parameters from {decoder.Name}: {GetErrorMessage(paramCopyResult)}");
                     continue;
                 }
 
                 // initialize hardware decode context.
                 if (hwDeviceType != AVHWDeviceType.AV_HWDEVICE_TYPE_NONE)
                 {
-                    int hwDeviceCreateResult = ffmpeg.av_hwdevice_ctx_create(&codecContext->hw_device_ctx, hwDeviceType, null, null, 0);
+                    int hwDeviceCreateResult = Ffmpeg.av_hwdevice_ctx_create(&codecContext->hw_device_ctx, hwDeviceType, null, null, 0);
 
                     if (hwDeviceCreateResult < 0)
                     {
-                        Logger.Log($"Couldn't create hardware video decoder context {hwDeviceType} for codec {decoder.Name}: {getErrorMessage(hwDeviceCreateResult)}");
+                        Logger.Log($"Couldn't create hardware video decoder context {hwDeviceType} for codec {decoder.Name}: {GetErrorMessage(hwDeviceCreateResult)}");
                         continue;
                     }
 
                     Logger.Log($"Successfully opened hardware video decoder context {hwDeviceType} for codec {decoder.Name}");
                 }
 
-                int openCodecResult = ffmpeg.avcodec_open2(codecContext, decoder.Pointer, null);
+                int openCodecResult = Ffmpeg.avcodec_open2(codecContext, decoder.Pointer, null);
 
                 if (openCodecResult < 0)
                 {
-                    Logger.Log($"Error trying to open {decoder.Name} codec: {getErrorMessage(openCodecResult)}");
+                    Logger.Log($"Error trying to open {decoder.Name} codec: {GetErrorMessage(openCodecResult)}");
                     continue;
                 }
 
@@ -449,8 +424,8 @@ namespace osu.Framework.Graphics.Video
 
         private void decodingLoop(CancellationToken cancellationToken)
         {
-            var packet = ffmpeg.av_packet_alloc();
-            var receiveFrame = ffmpeg.av_frame_alloc();
+            var packet = Ffmpeg.av_packet_alloc();
+            var receiveFrame = Ffmpeg.av_frame_alloc();
 
             const int max_pending_frames = 3;
 
@@ -503,8 +478,8 @@ namespace osu.Framework.Graphics.Video
             }
             finally
             {
-                ffmpeg.av_packet_free(&packet);
-                ffmpeg.av_frame_free(&receiveFrame);
+                Ffmpeg.av_packet_free(&packet);
+                Ffmpeg.av_frame_free(&receiveFrame);
 
                 if (State != DecoderState.Faulted)
                     State = DecoderState.Stopped;
@@ -517,7 +492,7 @@ namespace osu.Framework.Graphics.Video
             // only read if the packet is empty, otherwise we would overwrite what's already there which can lead to visual glitches.
             int readFrameResult = 0;
             if (packet->buf == null)
-                readFrameResult = ffmpeg.av_read_frame(formatContext, packet);
+                readFrameResult = Ffmpeg.av_read_frame(formatContext, packet);
 
             if (readFrameResult >= 0)
             {
@@ -537,7 +512,7 @@ namespace osu.Framework.Graphics.Video
                 }
 
                 if (unrefPacket)
-                    ffmpeg.av_packet_unref(packet);
+                    Ffmpeg.av_packet_unref(packet);
             }
             else if (readFrameResult == FFmpegFuncs.AVERROR_EOF)
             {
@@ -561,7 +536,7 @@ namespace osu.Framework.Graphics.Video
             }
             else
             {
-                Logger.Log($"Failed to read data into avcodec packet: {getErrorMessage(readFrameResult)}");
+                Logger.Log($"Failed to read data into avcodec packet: {GetErrorMessage(readFrameResult)}");
                 Thread.Sleep(1);
             }
         }
@@ -569,7 +544,7 @@ namespace osu.Framework.Graphics.Video
         private int sendPacket(AVFrame* receiveFrame, AVPacket* packet)
         {
             // send the packet for decoding.
-            int sendPacketResult = ffmpeg.avcodec_send_packet(codecContext, packet);
+            int sendPacketResult = Ffmpeg.avcodec_send_packet(codecContext, packet);
 
             // Note: EAGAIN can be returned if there's too many pending frames, which we have to read,
             // otherwise we would get stuck in an infinite loop.
@@ -579,7 +554,7 @@ namespace osu.Framework.Graphics.Video
             }
             else
             {
-                Logger.Log($"Failed to send avcodec packet: {getErrorMessage(sendPacketResult)}");
+                Logger.Log($"Failed to send avcodec packet: {GetErrorMessage(sendPacketResult)}");
                 tryDisableHwDecoding(sendPacketResult);
             }
 
@@ -593,13 +568,13 @@ namespace osu.Framework.Graphics.Video
         {
             while (true)
             {
-                int receiveFrameResult = ffmpeg.avcodec_receive_frame(codecContext, receiveFrame);
+                int receiveFrameResult = Ffmpeg.avcodec_receive_frame(codecContext, receiveFrame);
 
                 if (receiveFrameResult < 0)
                 {
                     if (receiveFrameResult != -FFmpegFuncs.EAGAIN && receiveFrameResult != FFmpegFuncs.AVERROR_EOF)
                     {
-                        Logger.Log($"Failed to receive frame from avcodec: {getErrorMessage(receiveFrameResult)}");
+                        Logger.Log($"Failed to receive frame from avcodec: {GetErrorMessage(receiveFrameResult)}");
                         tryDisableHwDecoding(receiveFrameResult);
                     }
 
@@ -622,15 +597,15 @@ namespace osu.Framework.Graphics.Video
                 {
                     // transfer data from HW decoder to RAM.
                     if (!hwTransferFrames.TryDequeue(out var hwTransferFrame))
-                        hwTransferFrame = new FFmpegFrame(ffmpeg, returnHwTransferFrame);
+                        hwTransferFrame = new FFmpegFrame(Ffmpeg, returnHwTransferFrame);
 
                     // WARNING: frames from `av_hwframe_transfer_data` have their timestamps set to AV_NOPTS_VALUE instead of real values.
                     // if you need to use them later, take them from `receiveFrame`.
-                    int transferResult = ffmpeg.av_hwframe_transfer_data(hwTransferFrame.Pointer, receiveFrame, 0);
+                    int transferResult = Ffmpeg.av_hwframe_transfer_data(hwTransferFrame.Pointer, receiveFrame, 0);
 
                     if (transferResult < 0)
                     {
-                        Logger.Log($"Failed to transfer frame from HW decoder: {getErrorMessage(transferResult)}");
+                        Logger.Log($"Failed to transfer frame from HW decoder: {GetErrorMessage(transferResult)}");
                         tryDisableHwDecoding(transferResult);
 
                         hwTransferFrame.Dispose();
@@ -642,8 +617,8 @@ namespace osu.Framework.Graphics.Video
                 else
                 {
                     // copy data to a new AVFrame so that `receiveFrame` can be reused.
-                    frame = new FFmpegFrame(ffmpeg);
-                    ffmpeg.av_frame_move_ref(frame.Pointer, receiveFrame);
+                    frame = new FFmpegFrame(Ffmpeg);
+                    Ffmpeg.av_frame_move_ref(frame.Pointer, receiveFrame);
                 }
 
                 lastDecodedFrameTime = (float)frameTime;
@@ -676,30 +651,30 @@ namespace osu.Framework.Graphics.Video
             int width = frame.Pointer->width;
             int height = frame.Pointer->height;
 
-            swsContext = ffmpeg.sws_getCachedContext(
+            swsContext = Ffmpeg.sws_getCachedContext(
                 swsContext,
                 width, height, frame.PixelFormat,
                 width, height, targetPixelFormat,
                 1, null, null, null);
 
             if (!scalerFrames.TryDequeue(out var scalerFrame))
-                scalerFrame = new FFmpegFrame(ffmpeg, returnScalerFrame);
+                scalerFrame = new FFmpegFrame(Ffmpeg, returnScalerFrame);
 
             // (re)initialize the scaler frame if needed.
             if (scalerFrame.PixelFormat != targetPixelFormat || scalerFrame.Pointer->width != width || scalerFrame.Pointer->height != height)
             {
-                ffmpeg.av_frame_unref(scalerFrame.Pointer);
+                Ffmpeg.av_frame_unref(scalerFrame.Pointer);
 
                 // Note: this field determines the scaler's output pix format.
                 scalerFrame.PixelFormat = targetPixelFormat;
                 scalerFrame.Pointer->width = width;
                 scalerFrame.Pointer->height = height;
 
-                int getBufferResult = ffmpeg.av_frame_get_buffer(scalerFrame.Pointer, 0);
+                int getBufferResult = Ffmpeg.av_frame_get_buffer(scalerFrame.Pointer, 0);
 
                 if (getBufferResult < 0)
                 {
-                    Logger.Log($"Failed to allocate SWS frame buffer: {getErrorMessage(getBufferResult)}");
+                    Logger.Log($"Failed to allocate SWS frame buffer: {GetErrorMessage(getBufferResult)}");
 
                     scalerFrame.Dispose();
                     frame.Return();
@@ -707,7 +682,7 @@ namespace osu.Framework.Graphics.Video
                 }
             }
 
-            int scalerResult = ffmpeg.sws_scale(
+            int scalerResult = Ffmpeg.sws_scale(
                 swsContext,
                 frame.Pointer->data, frame.Pointer->linesize, 0, height,
                 scalerFrame.Pointer->data, scalerFrame.Pointer->linesize);
@@ -717,7 +692,7 @@ namespace osu.Framework.Graphics.Video
 
             if (scalerResult < 0)
             {
-                Logger.Log($"Failed to scale frame: {getErrorMessage(scalerResult)}");
+                Logger.Log($"Failed to scale frame: {GetErrorMessage(scalerResult)}");
 
                 scalerFrame.Dispose();
                 return null;
@@ -748,25 +723,6 @@ namespace osu.Framework.Graphics.Video
             }
         }
 
-        private string getErrorMessage(int errorCode)
-        {
-            const ulong buffer_size = 256;
-            byte[] buffer = new byte[buffer_size];
-
-            int strErrorCode;
-
-            fixed (byte* bufPtr = buffer)
-            {
-                strErrorCode = ffmpeg.av_strerror(errorCode, bufPtr, buffer_size);
-            }
-
-            if (strErrorCode < 0)
-                return $"{errorCode} (av_strerror failed with code {strErrorCode})";
-
-            int messageLength = Math.Max(0, Array.IndexOf(buffer, (byte)0));
-            return $"{Encoding.ASCII.GetString(buffer[..messageLength])} ({errorCode})";
-        }
-
         /// <remarks>
         /// Returned HW devices are not guaranteed to be available on the current machine, they only represent what the loaded FFmpeg libraries support.
         /// </remarks>
@@ -784,11 +740,11 @@ namespace osu.Framework.Graphics.Video
 
             while (true)
             {
-                var avCodec = ffmpeg.av_codec_iterate(&iterator);
+                var avCodec = Ffmpeg.av_codec_iterate(&iterator);
 
                 if (avCodec == null) break;
 
-                var codec = new FFmpegCodec(ffmpeg, avCodec);
+                var codec = new FFmpegCodec(Ffmpeg, avCodec);
                 if (codec.Id != codecId || !codec.IsDecoder) continue;
 
                 firstCodec ??= codec;
@@ -813,83 +769,6 @@ namespace osu.Framework.Graphics.Video
                 codecs.Add((firstCodec, AVHWDeviceType.AV_HWDEVICE_TYPE_NONE));
 
             return codecs;
-        }
-
-        protected virtual FFmpegFuncs CreateFuncs()
-        {
-            // other frameworks should handle native libraries themselves
-            FFmpeg.AutoGen.ffmpeg.GetOrLoadLibrary = name =>
-            {
-                int version = FFmpeg.AutoGen.ffmpeg.LibraryVersionMap[name];
-
-                // "lib" prefix and extensions are resolved by .net core
-                string libraryName;
-
-                switch (RuntimeInfo.OS)
-                {
-                    case RuntimeInfo.Platform.macOS:
-                        libraryName = $"{name}.{version}";
-                        break;
-
-                    case RuntimeInfo.Platform.Windows:
-                        libraryName = $"{name}-{version}";
-                        break;
-
-                    // To handle versioning in Linux, we have to specify the entire file name
-                    // because Linux uses a version suffix after the file extension (e.g. libavutil.so.56)
-                    // More info: https://learn.microsoft.com/en-us/dotnet/standard/native-interop/native-library-loading?view=net-6.0
-                    case RuntimeInfo.Platform.Linux:
-                        libraryName = $"lib{name}.so.{version}";
-                        break;
-
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(RuntimeInfo.OS), RuntimeInfo.OS, null);
-                }
-
-                return NativeLibrary.Load(libraryName, RuntimeInfo.EntryAssembly, DllImportSearchPath.UseDllDirectoryForDependencies | DllImportSearchPath.SafeDirectories);
-            };
-
-            return new FFmpegFuncs
-            {
-                av_dict_set = FFmpeg.AutoGen.ffmpeg.av_dict_set,
-                av_dict_free = FFmpeg.AutoGen.ffmpeg.av_dict_free,
-                av_frame_alloc = FFmpeg.AutoGen.ffmpeg.av_frame_alloc,
-                av_frame_free = FFmpeg.AutoGen.ffmpeg.av_frame_free,
-                av_frame_unref = FFmpeg.AutoGen.ffmpeg.av_frame_unref,
-                av_frame_move_ref = FFmpeg.AutoGen.ffmpeg.av_frame_move_ref,
-                av_frame_get_buffer = FFmpeg.AutoGen.ffmpeg.av_frame_get_buffer,
-                av_strdup = FFmpeg.AutoGen.ffmpeg.av_strdup,
-                av_strerror = FFmpeg.AutoGen.ffmpeg.av_strerror,
-                av_malloc = FFmpeg.AutoGen.ffmpeg.av_malloc,
-                av_freep = FFmpeg.AutoGen.ffmpeg.av_freep,
-                av_packet_alloc = FFmpeg.AutoGen.ffmpeg.av_packet_alloc,
-                av_packet_unref = FFmpeg.AutoGen.ffmpeg.av_packet_unref,
-                av_packet_free = FFmpeg.AutoGen.ffmpeg.av_packet_free,
-                av_read_frame = FFmpeg.AutoGen.ffmpeg.av_read_frame,
-                av_seek_frame = FFmpeg.AutoGen.ffmpeg.av_seek_frame,
-                av_hwdevice_ctx_create = FFmpeg.AutoGen.ffmpeg.av_hwdevice_ctx_create,
-                av_hwframe_transfer_data = FFmpeg.AutoGen.ffmpeg.av_hwframe_transfer_data,
-                av_codec_iterate = FFmpeg.AutoGen.ffmpeg.av_codec_iterate,
-                av_codec_is_decoder = FFmpeg.AutoGen.ffmpeg.av_codec_is_decoder,
-                avcodec_get_hw_config = FFmpeg.AutoGen.ffmpeg.avcodec_get_hw_config,
-                avcodec_alloc_context3 = FFmpeg.AutoGen.ffmpeg.avcodec_alloc_context3,
-                avcodec_free_context = FFmpeg.AutoGen.ffmpeg.avcodec_free_context,
-                avcodec_parameters_to_context = FFmpeg.AutoGen.ffmpeg.avcodec_parameters_to_context,
-                avcodec_open2 = FFmpeg.AutoGen.ffmpeg.avcodec_open2,
-                avcodec_receive_frame = FFmpeg.AutoGen.ffmpeg.avcodec_receive_frame,
-                avcodec_send_packet = FFmpeg.AutoGen.ffmpeg.avcodec_send_packet,
-                avcodec_flush_buffers = FFmpeg.AutoGen.ffmpeg.avcodec_flush_buffers,
-                avformat_alloc_context = FFmpeg.AutoGen.ffmpeg.avformat_alloc_context,
-                avformat_close_input = FFmpeg.AutoGen.ffmpeg.avformat_close_input,
-                avformat_find_stream_info = FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info,
-                avformat_open_input = FFmpeg.AutoGen.ffmpeg.avformat_open_input,
-                av_find_best_stream = FFmpeg.AutoGen.ffmpeg.av_find_best_stream,
-                avio_alloc_context = FFmpeg.AutoGen.ffmpeg.avio_alloc_context,
-                avio_context_free = FFmpeg.AutoGen.ffmpeg.avio_context_free,
-                sws_freeContext = FFmpeg.AutoGen.ffmpeg.sws_freeContext,
-                sws_getCachedContext = FFmpeg.AutoGen.ffmpeg.sws_getCachedContext,
-                sws_scale = FFmpeg.AutoGen.ffmpeg.sws_scale
-            };
         }
 
         #region Disposal
@@ -919,23 +798,23 @@ namespace osu.Framework.Graphics.Video
                 if (formatContext != null && inputOpened)
                 {
                     fixed (AVFormatContext** ptr = &formatContext)
-                        ffmpeg.avformat_close_input(ptr);
+                        Ffmpeg.avformat_close_input(ptr);
                 }
 
                 if (ioContext != null)
                 {
                     // This is not handled by avformat_close_input for custom IO:
                     // https://ffmpeg.org/doxygen/4.3/structAVFormatContext.html#a1e7324262b6b78522e52064daaa7bc87
-                    ffmpeg.av_freep(&ioContext->buffer);
+                    Ffmpeg.av_freep(&ioContext->buffer);
 
                     fixed (AVIOContext** ptr = &ioContext)
-                        ffmpeg.avio_context_free(ptr);
+                        Ffmpeg.avio_context_free(ptr);
                 }
 
                 if (codecContext != null)
                 {
                     fixed (AVCodecContext** ptr = &codecContext)
-                        ffmpeg.avcodec_free_context(ptr);
+                        Ffmpeg.avcodec_free_context(ptr);
                 }
 
                 seekCallback = null;
@@ -945,7 +824,7 @@ namespace osu.Framework.Graphics.Video
                 videoStream = null;
 
                 if (swsContext != null)
-                    ffmpeg.sws_freeContext(swsContext);
+                    Ffmpeg.sws_freeContext(swsContext);
 
                 while (decodedFrames.TryDequeue(out var f))
                 {
