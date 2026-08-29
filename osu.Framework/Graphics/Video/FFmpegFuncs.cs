@@ -106,6 +106,12 @@ namespace osu.Framework.Graphics.Video
 
         public delegate AVStream* AvformatNewStreamDelegate(AVFormatContext* s, AVCodec* c);
 
+        public delegate void SwrFreeDelegate(SwrContext** s);
+
+        public delegate int AvDictCopyDelegate(AVDictionary** dst, AVDictionary* src, int flags);
+
+        public delegate int AvcodecParametersFromContextDelegate(AVCodecParameters* par, AVCodecContext* codec);
+
         #endregion
 
         [CanBeNull]
@@ -157,6 +163,9 @@ namespace osu.Framework.Graphics.Video
         public AvPacketRescaleTsDelegate av_packet_rescale_ts;
         public AvInterleavedWriteFrameDelegate av_interleaved_write_frame;
         public AvformatNewStreamDelegate avformat_new_stream;
+        public SwrFreeDelegate swr_free;
+        public AvDictCopyDelegate av_dict_copy;
+        public AvcodecParametersFromContextDelegate avcodec_parameters_from_context;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.

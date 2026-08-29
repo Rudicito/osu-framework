@@ -7,24 +7,28 @@ using osu.Framework.Logging;
 
 namespace osu.Framework.Graphics.Video
 {
+    //todo: need to build encoders and muxer, see : https://github.com/ppy/osu-framework/issues/5974
+    // likely:
+    // - encoders: libx264 (video), aac (audio)
+    // - muxer: mp4
+    /// <remarks>
+    /// Heavily based of https://github.com/FFmpeg/FFmpeg/blob/df48dc624e7103ae99c59cb9d744cd17d317ec4d/doc/examples/mux.c
+    /// </remarks>
     public unsafe class VideoEncoder : FFmpegComponent, IDisposable
     {
-        // private AVStream* st;
-        // private AVCodecContext* enc;
-
-        /* pts of the next frame that will be generated */
-        // long next_pts;
-        // private int samples_count;
-        //
-        // private AVFrame* frame;
-        // private AVFrame* tmp_frame;
-        //
-        // private AVPacket* tmpPkt;
-        //
-        // private float t, tincr, tincr2;
-        //
-        // SwsContext* sws_ctx;
-        // SwrContext* swr_ctx;
+        public struct OutputStream
+        {
+            public AVStream* St;
+            public AVCodecContext* Enc;
+            public long NextPts;
+            public int SamplesCount;
+            public AVFrame* Frame;
+            public AVFrame* TmpFrame;
+            public AVPacket* TmpPkt;
+            public float T, Tincr, Tincr2;
+            public SwsContext* SwsCtx;
+            public SwrContext* SwrCtx;
+        }
 
         private bool writeFrame(AVFormatContext* fmtCtx, AVCodecContext* c, AVStream* st, AVFrame* frame, AVPacket* pkt)
         {
@@ -70,9 +74,15 @@ namespace osu.Framework.Graphics.Video
             return ret == FFmpegFuncs.AVERROR_EOF;
         }
 
-        // private AVFrame buildVideoFrame(Image<Rgba32> image)
+        #region Audio
+
+        // private AVFrame* allocAudioFrame(AVSampleFormat sample_fmt, AVChannelLayout *channel_layout, int sample_rate, int nb_samples)
         // {
         // }
+
+        #endregion
+
+        #region Video
 
         private AVFrame* allocVideoFrame(AVPixelFormat pixFmt, int width, int height)
         {
@@ -95,6 +105,49 @@ namespace osu.Framework.Graphics.Video
 
             return frame;
         }
+
+        private void openVideo(AVFormatContext* oc, AVCodec* codec, OutputStream* ost, AVDictionary* optArg)
+        {
+            AVCodecContext* c = ost->Enc;
+            AVDictionary* opt = null;
+
+            Ffmpeg.av_dict_copy(&opt, optArg, 0);
+
+            // open the codec
+            int ret = Ffmpeg.avcodec_open2(c, codec, &opt);
+            Ffmpeg.av_dict_free?.Invoke(&opt);
+
+            if (ret < 0)
+                throw new InvalidOperationException($"Could not open video codec: {GetErrorMessage(ret)}");
+
+            // allocate and init a reusable frame
+            ost->Frame = allocVideoFrame(c->pix_fmt, c->width, c->height);
+
+            if (ost->Frame == null)
+                throw new InvalidOperationException("Could not allocate video frame");
+
+            // If the output format is not YUV420P, then a temporary YUV420P
+            // picture is needed too. It is then converted to the required
+            // output format.
+            ost->TmpFrame = null;
+
+            if (c->pix_fmt != AVPixelFormat.AV_PIX_FMT_YUV420P)
+            {
+                ost->TmpFrame = allocVideoFrame(AVPixelFormat.AV_PIX_FMT_YUV420P, c->width, c->height);
+
+                if (ost->TmpFrame == null)
+                    //todo: free ost->Frame?
+                    throw new InvalidOperationException("Could not allocate temporary video frame\n");
+            }
+
+            /* copy the stream parameters to the muxer */
+            ret = Ffmpeg.avcodec_parameters_from_context(ost->St->codecpar, c);
+
+            if (ret < 0)
+                throw new InvalidOperationException("Could not copy the stream parameters");
+        }
+
+        #endregion
 
         // sws_scale for colour changes
 
