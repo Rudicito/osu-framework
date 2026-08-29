@@ -112,6 +112,28 @@ namespace osu.Framework.Graphics.Video
 
         public delegate int AvcodecParametersFromContextDelegate(AVCodecParameters* par, AVCodecContext* codec);
 
+        public delegate AVFrame* AllocAudioFrameDelegate(AVSampleFormat sample_fmt, ulong channel_layout, int sample_rate, int nb_samples);
+
+        public delegate SwrContext* SwrAllocDelegate();
+
+        public delegate int AvOptSetIntDelegate(void* obj, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, long val, int search_flags);
+
+        public delegate int AvOptSetSampleFmtDelegate(void* obj, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, AVSampleFormat fmt, int search_flags);
+
+        public delegate int SwrInitDelegate(SwrContext* s);
+
+        public delegate int AvWriteTrailerDelegate(AVFormatContext* s);
+
+        public delegate int AvGetChannelLayoutNbChannelsDelegate(ulong channel_layout);
+
+        public delegate int AvioClosepDelegate(AVIOContext** s);
+
+        public delegate void AvformatFreeContextDelegate(AVFormatContext* s);
+
+        public delegate int AvformatWriteHeaderDelegate(AVFormatContext* s, AVDictionary** options);
+
+        public delegate int AvformatAllocOutputContext2Delegate(AVFormatContext** avctx, AVOutputFormat* oformat, [MarshalAs(UnmanagedType.LPUTF8Str)] string format, [MarshalAs(UnmanagedType.LPUTF8Str)] string filename);
+
         #endregion
 
         [CanBeNull]
@@ -166,6 +188,17 @@ namespace osu.Framework.Graphics.Video
         public SwrFreeDelegate swr_free;
         public AvDictCopyDelegate av_dict_copy;
         public AvcodecParametersFromContextDelegate avcodec_parameters_from_context;
+        public AllocAudioFrameDelegate alloc_audio_frame;
+        public SwrAllocDelegate swr_alloc;
+        public AvOptSetIntDelegate av_opt_set_int;
+        public AvOptSetSampleFmtDelegate av_opt_set_sample_fmt;
+        public SwrInitDelegate swr_init;
+        public AvWriteTrailerDelegate av_write_trailer;
+        public AvGetChannelLayoutNbChannelsDelegate av_get_channel_layout_nb_channels;
+        public AvioClosepDelegate avio_closep;
+        public AvformatFreeContextDelegate avformat_free_context;
+        public AvformatWriteHeaderDelegate avformat_write_header;
+        public AvformatAllocOutputContext2Delegate avformat_alloc_output_context2;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.
@@ -179,5 +212,12 @@ namespace osu.Framework.Graphics.Video
         public const int AVERROR_EOF = -('E' + ('O' << 8) + ('F' << 16) + (' ' << 24));
         public const long AV_NOPTS_VALUE = unchecked((long)0x8000000000000000);
         public const int ENOMEM = 12;
+        public const int AV_CODEC_CAP_VARIABLE_FRAME_SIZE = 1 << 16;
+        public const int AV_CH_FRONT_LEFT = 0x00000001;
+        public const int AV_CH_FRONT_RIGHT = 0x00000002;
+        public const int AV_CH_LAYOUT_STEREO = AV_CH_FRONT_LEFT | AV_CH_FRONT_RIGHT;
+        public const int AV_CODEC_FLAG_GLOBAL_HEADER = 1 << 22;
+        public const int AVFMT_GLOBALHEADER = 0x0040;
+        public const int SWS_BICUBIC = 4;
     }
 }
