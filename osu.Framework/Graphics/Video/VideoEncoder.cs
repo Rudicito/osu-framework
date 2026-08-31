@@ -2,6 +2,7 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using System.Drawing;
 using FFmpeg.AutoGen;
 using osu.Framework.Logging;
 
@@ -12,21 +13,32 @@ namespace osu.Framework.Graphics.Video
     // - encoders: libx264 (video), aac (audio)
     // - muxer: mp4
     /// <remarks>
-    /// Heavily based of https://github.com/FFmpeg/FFmpeg/blob/release/4.3/doc/examples/muxing.c
+    /// Heavily based on https://github.com/FFmpeg/FFmpeg/blob/release/4.3/doc/examples/muxing.c
     /// </remarks>
     public unsafe class VideoEncoder : FFmpegComponent, IDisposable
     {
-        public const double STREAM_DURATION = 10.0;
-        public const int STREAM_FRAME_RATE = 25; // 25 frame/s
+        public int VideoFrameRate { get; init; } = 60;
+        public Size VideoSize { get; init; } = new Size(1920, 1080);
+
+        public int AudioBitRate { get; init; } = 192000;
+        public int AudioSampleRate { get; init; } = 44100;
         public const AVPixelFormat STREAM_PIX_FMT = AVPixelFormat.AV_PIX_FMT_YUV420P; // default pix_fmt
 
+        private AVOutputFormat* fmt;
         private AVFormatContext* oc = null;
+
         private OutputStream videoStream;
         private OutputStream audioStream;
 
+        private AVCodec* videoCodec;
+        private AVCodec* audioCodec;
+
+        private bool haveVideo;
+        private bool haveAudio;
+
         public const double SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
 
-        public struct OutputStream
+        private struct OutputStream
         {
             public AVStream* St;
             public AVCodecContext* Enc;
@@ -116,8 +128,8 @@ namespace osu.Framework.Graphics.Video
                         ? (*codec)->sample_fmts[0]
                         : AVSampleFormat.AV_SAMPLE_FMT_FLTP;
 
-                    c->bit_rate = 64000;
-                    c->sample_rate = 44100;
+                    c->bit_rate = AudioBitRate;
+                    c->sample_rate = AudioSampleRate;
 
                     int i;
 
@@ -147,42 +159,22 @@ namespace osu.Framework.Graphics.Video
                     }
 
                     c->channels = Ffmpeg.av_get_channel_layout_nb_channels(c->channel_layout);
-                    ost->St->time_base = new AVRational { den = 1, num = c->sample_rate };
+                    ost->St->time_base = new AVRational { num = 1, den = c->sample_rate };
                     break;
 
                 case AVMediaType.AVMEDIA_TYPE_VIDEO:
                     c->codec_id = codecID;
-
-                    c->bit_rate = 400000;
-                    // Resolution must be a multiple of two.
-                    c->width = 352;
-                    c->height = 288;
+                    c->width = VideoSize.Width;
+                    c->height = VideoSize.Height;
                     // timebase: This is the fundamental unit of time (in seconds) in terms
                     // of which frame timestamps are represented. For fixed-fps content,
                     // timebase should be 1/framerate and timestamp increments should be
                     // identical to 1.
-                    ost->St->time_base = new AVRational { den = 1, num = STREAM_FRAME_RATE };
+                    ost->St->time_base = new AVRational { num = 1, den = VideoFrameRate };
                     c->time_base = ost->St->time_base;
-
                     c->gop_size = 12; // emit one intra frame every twelve frames at most
                     c->pix_fmt = STREAM_PIX_FMT;
 
-                    if (c->codec_id == AV_CODEC_ID_MPEG2VIDEO)
-                    {
-                        // just for testing, we also add B-frames
-                        c->max_b_frames = 2;
-                    }
-
-                    if (c->codec_id == AV_CODEC_ID_MPEG1VIDEO) {
-                        // Needed to avoid using macroblocks in which some coeffs overflow.
-                        // This does not happen with normal video, it just happens here as
-                        // the motion of the chroma plane does not match the luma plane.
-                        c->mb_decision = 2;
-                    }
-
-                    break;
-
-                default:
                     break;
             }
 
@@ -334,7 +326,6 @@ namespace osu.Framework.Graphics.Video
 
         #endregion
 
-        //todo: should use fixed()?
         private void closeStream(AVFormatContext* oc, OutputStream* ost)
         {
             Ffmpeg.avcodec_free_context(&ost->Enc);
@@ -349,41 +340,79 @@ namespace osu.Framework.Graphics.Video
 
         public void StartRecord(string filename)
         {
+            int ret;
+            AVDictionary* opt = null;
+
             fixed (AVFormatContext** ocPtr = &oc)
             {
-                int ret = Ffmpeg.avformat_alloc_output_context2(ocPtr, null, "mp4", filename);
+                ret = Ffmpeg.avformat_alloc_output_context2(ocPtr, null, "mp4", filename);
                 if (ret < 0 || oc == null)
                     throw new InvalidOperationException($"Could not create output context: {GetErrorMessage(ret)}");
             }
 
-            var fmt = oc->oformat;
+            fmt = oc->oformat;
 
             // Add the audio and video streams using the default format codecs
             // and initialize the codecs.
             if (fmt->video_codec != AVCodecID.AV_CODEC_ID_NONE)
             {
-                addStream(&videoStream, oc, &video_codec, fmt->video_codec);
-                have_video = 1;
-                encode_video = 1;
+                fixed (OutputStream* vst = &videoStream)
+                fixed (AVCodec** vco = &videoCodec)
+                    addStream(vst, oc, vco, fmt->video_codec);
+                haveVideo = true;
             }
 
-            if (fmt->audio_codec != AV_CODEC_ID_NONE) {
-                add_stream(&audio_st, oc, &audio_codec, fmt->audio_codec);
-                have_audio = 1;
-                encode_audio = 1;
+            if (fmt->audio_codec != AVCodecID.AV_CODEC_ID_NONE)
+            {
+                fixed (OutputStream* ast = &audioStream)
+                fixed (AVCodec** aco = &audioCodec)
+                    addStream(ast, oc, aco, fmt->audio_codec);
+                haveAudio = true;
             }
 
             /* Now that all the parameters are set, we can open the audio and
              * video codecs and allocate the necessary encode buffers. */
-            if (have_video)
-                open_video(oc, video_codec, &video_st, opt);
+            if (haveVideo)
+            {
+                fixed (OutputStream* vst = &videoStream)
+                    openVideo(oc, videoCodec, vst, opt);
+            }
 
-            if (have_audio)
-                open_audio(oc, audio_codec, &audio_st, opt);
+            if (haveAudio)
+            {
+                fixed (OutputStream* ast = &audioStream)
+                    openAudio(oc, audioCodec, ast, opt);
+            }
+
+            if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
+            {
+                ret = Ffmpeg.avio_open(&oc->pb, filename, FFmpegFuncs.AVIO_FLAG_WRITE);
+
+                if (ret < 0)
+                    throw new InvalidOperationException($"Could not open {filename} : {GetErrorMessage(ret)}");
+            }
+
+            // Write the stream header, if any.
+            ret = Ffmpeg.avformat_write_header(oc, &opt);
+
+            if (ret < 0)
+                throw new InvalidOperationException($"Error occurred when opening output file: {GetErrorMessage(ret)}");
         }
 
         public void FinishRecord()
         {
+            if (haveVideo)
+            {
+                fixed (OutputStream* vst = &videoStream)
+                    writeFrame(oc, vst->Enc, vst->St, null, vst->TmpPkt); // flush vidéo
+            }
+
+            if (haveAudio)
+            {
+                fixed (OutputStream* ast = &audioStream)
+                    writeFrame(oc, ast->Enc, ast->St, null, ast->TmpPkt); // flush audio
+            }
+
             // Write the trailer, if any. The trailer must be written before you
             // close the CodecContexts open when you wrote the header; otherwise
             // av_write_trailer() may try to use memory that was freed on
@@ -391,21 +420,21 @@ namespace osu.Framework.Graphics.Video
             Ffmpeg.av_write_trailer(oc);
 
             // Close each codec.
-            if (have_video)
+            if (haveVideo)
             {
                 fixed (OutputStream* st = &videoStream)
                     closeStream(oc, st);
             }
 
-            if (have_audio)
+            if (haveAudio)
             {
                 fixed (OutputStream* st = &audioStream)
                     closeStream(oc, st);
             }
 
-            if (!(fmt->flags & AVFMT_NOFILE))
+            if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
                 // Close the output file.
-                avio_closep(&oc->pb);
+                Ffmpeg.avio_closep(&oc->pb);
 
             // free the stream
             Ffmpeg.avformat_free_context(oc);

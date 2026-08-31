@@ -21,6 +21,8 @@ namespace osu.Framework.Graphics.Video
 
         public bool IsDecoder => ffmpeg.av_codec_is_decoder(Pointer) != 0;
 
+        public bool IsEncoder => ffmpeg.av_codec_is_encoder(Pointer) != 0;
+
         private readonly FFmpegFuncs ffmpeg;
 
         public FFmpegCodec(FFmpegFuncs ffmpeg, AVCodec* codec)

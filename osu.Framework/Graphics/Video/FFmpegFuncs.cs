@@ -134,6 +134,10 @@ namespace osu.Framework.Graphics.Video
 
         public delegate int AvformatAllocOutputContext2Delegate(AVFormatContext** avctx, AVOutputFormat* oformat, [MarshalAs(UnmanagedType.LPUTF8Str)] string format, [MarshalAs(UnmanagedType.LPUTF8Str)] string filename);
 
+        public delegate int AvCodecIsEncoderDelegate(AVCodec* codec);
+
+        public delegate int AvioOpenDelegate(AVIOContext** s, [MarshalAs(UnmanagedType.LPUTF8Str)] string filename, int flags);
+
         #endregion
 
         [CanBeNull]
@@ -199,6 +203,8 @@ namespace osu.Framework.Graphics.Video
         public AvformatFreeContextDelegate avformat_free_context;
         public AvformatWriteHeaderDelegate avformat_write_header;
         public AvformatAllocOutputContext2Delegate avformat_alloc_output_context2;
+        public AvCodecIsEncoderDelegate av_codec_is_encoder;
+        public AvioOpenDelegate avio_open;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.
@@ -219,5 +225,7 @@ namespace osu.Framework.Graphics.Video
         public const int AV_CODEC_FLAG_GLOBAL_HEADER = 1 << 22;
         public const int AVFMT_GLOBALHEADER = 0x0040;
         public const int SWS_BICUBIC = 4;
+        public const int AVFMT_NOFILE = 0x0001;
+        public const int AVIO_FLAG_WRITE = 2;
     }
 }
