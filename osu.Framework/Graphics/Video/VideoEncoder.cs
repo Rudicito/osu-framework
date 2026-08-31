@@ -2,9 +2,14 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
-using System.Drawing;
 using FFmpeg.AutoGen;
+using osu.Framework.Allocation;
+using osu.Framework.Graphics.Rendering;
 using osu.Framework.Logging;
+using osu.Framework.Platform;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using Size = System.Drawing.Size;
 
 namespace osu.Framework.Graphics.Video
 {
@@ -17,6 +22,12 @@ namespace osu.Framework.Graphics.Video
     /// </remarks>
     public unsafe class VideoEncoder : FFmpegComponent, IDisposable
     {
+        [Resolved]
+        private GameHost host { get; set; } = null!;
+
+        [Resolved]
+        private IRenderer renderer { get; set; } = null!;
+
         public int VideoFrameRate { get; init; } = 60;
         public Size VideoSize { get; init; } = new Size(1920, 1080);
 
@@ -36,7 +47,9 @@ namespace osu.Framework.Graphics.Video
         private bool haveVideo;
         private bool haveAudio;
 
-        public const double SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
+        public const int SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
+
+        public EncoderState State = EncoderState.Idle;
 
         private struct OutputStream
         {
@@ -173,7 +186,7 @@ namespace osu.Framework.Graphics.Video
                     ost->St->time_base = new AVRational { num = 1, den = VideoFrameRate };
                     c->time_base = ost->St->time_base;
                     c->gop_size = 12; // emit one intra frame every twelve frames at most
-                    c->pix_fmt = STREAM_PIX_FMT;
+                    c->pix_fmt = AVPixelFormat.AV_PIX_FMT_RGBA;
 
                     break;
             }
@@ -317,11 +330,69 @@ namespace osu.Framework.Graphics.Video
                     throw new InvalidOperationException("Could not allocate temporary video frame\n");
             }
 
-            /* copy the stream parameters to the muxer */
+            // copy the stream parameters to the muxer
             ret = Ffmpeg.avcodec_parameters_from_context(ost->St->codecpar, c);
 
             if (ret < 0)
                 throw new InvalidOperationException("Could not copy the stream parameters");
+
+            ost->SwsCtx = ffmpeg.sws_getContext(c->width, c->height,
+                AVPixelFormat.AV_PIX_FMT_RGBA,
+                c->width, c->height,
+                c->pix_fmt,
+                SCALE_FLAGS, null, null, null);
+        }
+
+        private void writeVideoFrame(Image<Rgba32> image)
+        {
+            writeFrame(oc, videoStream.Enc, videoStream.St, getVideoFrame(image), videoStream.TmpPkt);
+        }
+
+        private AVFrame* getVideoFrame(Image<Rgba32> img)
+        {
+            AVCodecContext* c = videoStream.Enc;
+
+            if (Ffmpeg.av_frame_make_writable(videoStream.Frame) < 0)
+                throw new InvalidOperationException("Video frame is not writable");
+
+            if (Ffmpeg.av_frame_make_writable(videoStream.TmpFrame) < 0)
+                throw new InvalidOperationException("Temporary video frame is not writable");
+
+            // Convert Image<Rgba32> to AVFrame Rgba32
+            img.ProcessPixelRows(accessor =>
+            {
+                for (int y = 0; y < accessor.Height; y++)
+                {
+                    Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
+
+                    byte* rowDst = videoStream.TmpFrame->data[0] + y * videoStream.TmpFrame->linesize[0];
+
+                    fixed (Rgba32* rowSrc = pixelRow)
+                    {
+                        Buffer.MemoryCopy(
+                            rowSrc,
+                            rowDst,
+                            videoStream.TmpFrame->linesize[0],
+                            img.Width * sizeof(Rgba32)
+                        );
+                    }
+                }
+            });
+
+            // Convert AVFrame Rgba32 to AVFrame yuv
+            Ffmpeg.sws_scale(
+                videoStream.SwsCtx,
+                videoStream.TmpFrame->data,
+                videoStream.TmpFrame->linesize,
+                0,
+                c->height,
+                videoStream.Frame->data,
+                videoStream.Frame->linesize
+            );
+
+            videoStream.Frame->pts = videoStream.NextPts++;
+
+            return videoStream.Frame;
         }
 
         #endregion
@@ -338,7 +409,7 @@ namespace osu.Framework.Graphics.Video
 
         // sws_scale for colour changes
 
-        public void StartRecord(string filename)
+        public void prepareRecording()
         {
             int ret;
             AVDictionary* opt = null;
@@ -370,8 +441,8 @@ namespace osu.Framework.Graphics.Video
                 haveAudio = true;
             }
 
-            /* Now that all the parameters are set, we can open the audio and
-             * video codecs and allocate the necessary encode buffers. */
+            // Now that all the parameters are set, we can open the audio and
+            // video codecs and allocate the necessary encode buffers.
             if (haveVideo)
             {
                 fixed (OutputStream* vst = &videoStream)
@@ -399,8 +470,39 @@ namespace osu.Framework.Graphics.Video
                 throw new InvalidOperationException($"Error occurred when opening output file: {GetErrorMessage(ret)}");
         }
 
-        public void FinishRecord()
+        public void StartRecording(string filename)
         {
+            if (State == EncoderState.Running)
+                return;
+
+            try
+            {
+                prepareRecording();
+                addSchedule();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                throw;
+            }
+        }
+
+        private void addSchedule()
+        {
+            host.DrawThread.Scheduler.AddDelayed(() =>
+            {
+                var image = renderer.TakeScreenshot();
+                writeVideoFrame(image);
+
+                //todo: call writeAudioFrame here when ready
+            }, 0, true);
+        }
+
+        public void StopRecording()
+        {
+            if (State != EncoderState.Running)
+                return;
+
             if (haveVideo)
             {
                 fixed (OutputStream* vst = &videoStream)
@@ -438,11 +540,20 @@ namespace osu.Framework.Graphics.Video
 
             // free the stream
             Ffmpeg.avformat_free_context(oc);
+            oc = null;
+
+            State = EncoderState.Idle;
         }
 
         public void Dispose()
         {
             // TODO release managed resources here
+        }
+
+        public enum EncoderState
+        {
+            Running,
+            Idle,
         }
     }
 }

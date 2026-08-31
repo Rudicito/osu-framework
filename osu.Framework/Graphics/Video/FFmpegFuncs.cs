@@ -138,6 +138,8 @@ namespace osu.Framework.Graphics.Video
 
         public delegate int AvioOpenDelegate(AVIOContext** s, [MarshalAs(UnmanagedType.LPUTF8Str)] string filename, int flags);
 
+        public delegate SwsContext* SwsGetContextDelegate(int srcW, int srcH, AVPixelFormat srcFormat, int dstW, int dstH, AVPixelFormat dstFormat, int flags, SwsFilter* srcFilter, SwsFilter* dstFilter, double* param);
+
         #endregion
 
         [CanBeNull]
@@ -205,6 +207,7 @@ namespace osu.Framework.Graphics.Video
         public AvformatAllocOutputContext2Delegate avformat_alloc_output_context2;
         public AvCodecIsEncoderDelegate av_codec_is_encoder;
         public AvioOpenDelegate avio_open;
+        public SwsGetContextDelegate sws_getContext;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.
