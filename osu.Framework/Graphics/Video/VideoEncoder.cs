@@ -211,7 +211,7 @@ namespace osu.Framework.Graphics.Video
             return frame;
         }
 
-        private void openAudio(AVFormatContext* oc, AVCodec* codec, OutputStream* ost, AVDictionary* optArg)
+        private void openAudio(AVCodec* codec, OutputStream* ost, AVDictionary* optArg)
         {
             AVDictionary* opt = null;
 
@@ -324,7 +324,7 @@ namespace osu.Framework.Graphics.Video
             return frame;
         }
 
-        private void openVideo(AVFormatContext* oc, AVCodec* codec, OutputStream* ost, AVDictionary* optArg)
+        private void openVideo(AVCodec* codec, OutputStream* ost, AVDictionary* optArg)
         {
             AVCodecContext* c = ost->Enc;
             AVDictionary* opt = null;
@@ -396,7 +396,7 @@ namespace osu.Framework.Graphics.Video
 
         #endregion
 
-        private void closeStream(AVFormatContext* oc, OutputStream* ost)
+        private void closeStream(OutputStream* ost)
         {
             Ffmpeg.avcodec_free_context(&ost->Enc);
             Ffmpeg.av_frame_free(&ost->Frame);
@@ -443,13 +443,13 @@ namespace osu.Framework.Graphics.Video
             if (videoStreamInitiated)
             {
                 fixed (OutputStream* vst = &videoStream)
-                    openVideo(oc, videoCodec, vst, opt);
+                    openVideo(videoCodec, vst, opt);
             }
 
             if (audioStreamInitiated)
             {
                 fixed (OutputStream* ast = &audioStream)
-                    openAudio(oc, audioCodec, ast, opt);
+                    openAudio(audioCodec, ast, opt);
             }
 
             if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
@@ -543,7 +543,7 @@ namespace osu.Framework.Graphics.Video
             if (audioStreamInitiated)
             {
                 fixed (OutputStream* st = &audioStream)
-                    closeStream(oc, st);
+                    closeStream(st);
 
                 audioStreamInitiated = false;
             }
@@ -551,7 +551,7 @@ namespace osu.Framework.Graphics.Video
             if (videoStreamInitiated)
             {
                 fixed (OutputStream* st = &videoStream)
-                    closeStream(oc, st);
+                    closeStream(st);
 
                 videoStreamInitiated = false;
             }
