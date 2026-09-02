@@ -40,7 +40,7 @@ namespace osu.Framework.Graphics.Video
 
         public const int SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
 
-        public EncoderState State = EncoderState.Idle;
+        public EncoderState State { get; private set; } = EncoderState.Idle;
         private byte[]? pixelBuffer;
 
         private struct OutputStream
@@ -448,12 +448,16 @@ namespace osu.Framework.Graphics.Video
             {
                 fixed (OutputStream* vst = &videoStream)
                     openVideo(oc, videoCodec, vst, opt);
+
+                haveVideo = false;
             }
 
             if (haveAudio)
             {
                 fixed (OutputStream* ast = &audioStream)
                     openAudio(oc, audioCodec, ast, opt);
+
+                haveAudio = false;
             }
 
             if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
@@ -485,6 +489,7 @@ namespace osu.Framework.Graphics.Video
             {
                 State = EncoderState.Idle;
                 Logger.Log(e.Message);
+                Dispose();
                 throw;
             }
         }
@@ -551,7 +556,31 @@ namespace osu.Framework.Graphics.Video
 
         public void Dispose()
         {
-            // TODO release managed resources here
+            if (State == EncoderState.Running)
+            {
+                StopRecording();
+                return;
+            }
+
+            if (haveAudio)
+            {
+                fixed (OutputStream* st = &audioStream)
+                    closeStream(oc, st);
+            }
+
+            if (haveVideo)
+            {
+                fixed (OutputStream* st = &videoStream)
+                    closeStream(oc, st);
+            }
+
+            fmt = null;
+
+            if (oc != null)
+            {
+                Ffmpeg.avformat_free_context(oc);
+                oc = null;
+            }
         }
 
         public enum EncoderState
