@@ -23,6 +23,7 @@ namespace osu.Framework.Graphics.Video
         public int VideoFrameRate { get; init; } = 60;
         public Size VideoSize { get; init; } = new Size(1920, 1080);
 
+        public bool AudioEnable { get; init; } = true;
         public int AudioBitRate { get; init; } = 192000;
         public int AudioSampleRate { get; init; } = 44100;
 
@@ -35,8 +36,8 @@ namespace osu.Framework.Graphics.Video
         private AVCodec* videoCodec;
         private AVCodec* audioCodec;
 
-        private bool haveVideo;
-        private bool haveAudio;
+        private bool videoStreamInitiated;
+        private bool audioStreamInitiated;
 
         public const int SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
 
@@ -64,8 +65,7 @@ namespace osu.Framework.Graphics.Video
             if (ret < 0)
             {
                 // Error sending a frame to the encoder: %s
-                Logger.Log($"Error sending a frame to the encoder: {GetErrorMessage(ret)}");
-                return false;
+                throw new InvalidOperationException($"Error sending a frame to the encoder: {GetErrorMessage(ret)}");
             }
 
             while (true)
@@ -76,8 +76,7 @@ namespace osu.Framework.Graphics.Video
                     break;
                 else if (ret < 0)
                 {
-                    Logger.Log($"Error encoding a frame: {GetErrorMessage(ret)}");
-                    return false;
+                    throw new InvalidOperationException($"Error encoding a frame: {GetErrorMessage(ret)}");
                 }
 
                 // rescale output packet timestamp values from codec to stream timebase
@@ -92,8 +91,7 @@ namespace osu.Framework.Graphics.Video
                 // This would be different if one used av_write_frame().
                 if (ret < 0)
                 {
-                    Logger.Log($"Error while writing output packet: {GetErrorMessage(ret)}");
-                    return false;
+                    throw new InvalidOperationException($"Error while writing output packet: {GetErrorMessage(ret)}");
                 }
             }
 
@@ -408,8 +406,6 @@ namespace osu.Framework.Graphics.Video
             Ffmpeg.av_packet_free(&ost->TmpPkt);
         }
 
-        // sws_scale for colour changes
-
         private void prepareRecording(string filename)
         {
             int ret;
@@ -431,33 +427,29 @@ namespace osu.Framework.Graphics.Video
                 fixed (OutputStream* vst = &videoStream)
                 fixed (AVCodec** vco = &videoCodec)
                     addStream(vst, oc, vco, fmt->video_codec);
-                haveVideo = true;
+                videoStreamInitiated = true;
             }
 
-            if (fmt->audio_codec != AVCodecID.AV_CODEC_ID_NONE)
+            if (AudioEnable && fmt->audio_codec != AVCodecID.AV_CODEC_ID_NONE)
             {
                 fixed (OutputStream* ast = &audioStream)
                 fixed (AVCodec** aco = &audioCodec)
                     addStream(ast, oc, aco, fmt->audio_codec);
-                haveAudio = true;
+                audioStreamInitiated = true;
             }
 
             // Now that all the parameters are set, we can open the audio and
             // video codecs and allocate the necessary encode buffers.
-            if (haveVideo)
+            if (videoStreamInitiated)
             {
                 fixed (OutputStream* vst = &videoStream)
                     openVideo(oc, videoCodec, vst, opt);
-
-                haveVideo = false;
             }
 
-            if (haveAudio)
+            if (audioStreamInitiated)
             {
                 fixed (OutputStream* ast = &audioStream)
                     openAudio(oc, audioCodec, ast, opt);
-
-                haveAudio = false;
             }
 
             if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
@@ -512,13 +504,13 @@ namespace osu.Framework.Graphics.Video
             if (State != EncoderState.Running)
                 return;
 
-            if (haveVideo)
+            if (videoStreamInitiated)
             {
                 fixed (OutputStream* vst = &videoStream)
-                    writeFrame(oc, vst->Enc, vst->St, null, vst->TmpPkt); // flush vidéo
+                    writeFrame(oc, vst->Enc, vst->St, null, vst->TmpPkt); // flush video
             }
 
-            if (haveAudio)
+            if (audioStreamInitiated)
             {
                 fixed (OutputStream* ast = &audioStream)
                     writeFrame(oc, ast->Enc, ast->St, null, ast->TmpPkt); // flush audio
@@ -530,28 +522,14 @@ namespace osu.Framework.Graphics.Video
             // av_codec_close().
             Ffmpeg.av_write_trailer(oc);
 
-            // Close each codec.
-            if (haveVideo)
-            {
-                fixed (OutputStream* st = &videoStream)
-                    closeStream(oc, st);
-            }
-
-            if (haveAudio)
-            {
-                fixed (OutputStream* st = &audioStream)
-                    closeStream(oc, st);
-            }
-
             if ((fmt->flags & FFmpegFuncs.AVFMT_NOFILE) == 0)
                 // Close the output file.
                 Ffmpeg.avio_closep(&oc->pb);
 
-            // free the stream
-            Ffmpeg.avformat_free_context(oc);
-            oc = null;
-
             State = EncoderState.Idle;
+
+            // free the stream
+            Dispose();
         }
 
         public void Dispose()
@@ -562,16 +540,20 @@ namespace osu.Framework.Graphics.Video
                 return;
             }
 
-            if (haveAudio)
+            if (audioStreamInitiated)
             {
                 fixed (OutputStream* st = &audioStream)
                     closeStream(oc, st);
+
+                audioStreamInitiated = false;
             }
 
-            if (haveVideo)
+            if (videoStreamInitiated)
             {
                 fixed (OutputStream* st = &videoStream)
                     closeStream(oc, st);
+
+                videoStreamInitiated = false;
             }
 
             fmt = null;
@@ -581,6 +563,8 @@ namespace osu.Framework.Graphics.Video
                 Ffmpeg.avformat_free_context(oc);
                 oc = null;
             }
+
+            State = EncoderState.Idle;
         }
 
         public enum EncoderState
