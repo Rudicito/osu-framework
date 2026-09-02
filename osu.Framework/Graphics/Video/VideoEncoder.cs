@@ -257,6 +257,9 @@ namespace osu.Framework.Graphics.Video
 
         public void SendAudioFrame(float[] audioData)
         {
+            if (State == EncoderState.Idle)
+                throw new InvalidOperationException("Video encoder is idle");
+
             writeFrame(oc, audioStream.Enc, audioStream.St, getAudioFrame(audioData), audioStream.TmpPkt);
         }
 
@@ -359,6 +362,9 @@ namespace osu.Framework.Graphics.Video
 
         public void SendVideoFrame(Image<Rgba32> image)
         {
+            if (State == EncoderState.Idle)
+                throw new InvalidOperationException("Video encoder is idle");
+
             writeFrame(oc, videoStream.Enc, videoStream.St, getVideoFrame(image), videoStream.TmpPkt);
         }
 

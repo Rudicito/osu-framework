@@ -2,7 +2,10 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using osu.Framework.Allocation;
 using osu.Framework.Development;
+using osu.Framework.Graphics.Rendering;
+using osu.Framework.Graphics.Video;
 using osu.Framework.Platform;
 using osu.Framework.Threading;
 
@@ -14,9 +17,19 @@ namespace osu.Framework.Render
             : base(mainThread)
         {
             this.renderFramerate = renderFramerate;
+            encoder = new VideoEncoder
+            {
+                AudioEnable = false, //todo: add audio
+                VideoFrameRate = RenderFramerateHelper.GetIntFramerate(renderFramerate)
+            };
         }
 
-        // private double incrementedTime = 1000 / 600;
+        [Resolved]
+        private IRenderer renderer { get; set; } = null!;
+
+        private readonly VideoEncoder encoder;
+        private bool wait;
+
         private readonly RenderFramerate renderFramerate;
         private ulong nbFrame;
 
@@ -52,6 +65,14 @@ namespace osu.Framework.Render
             }
         }
 
+        public void StartRecording()
+        {
+            wait = true;
+            encoder.StartRecording("output.mp4");
+        }
+
+        public void StopRecording() => encoder.StopRecording();
+
         public override void RunMainLoop()
         {
             ExecutionMode = ExecutionMode.SingleThread;
@@ -62,9 +83,29 @@ namespace osu.Framework.Render
             {
                 foreach (var t in InternalThreads)
                 {
-                    if (t is not DrawThread || nbFrame % (ulong)drawThreadDelay == 0)
+                    if (t is not DrawThread)
                     {
                         t.RunSingleFrame();
+                    }
+
+                    else if (nbFrame % (ulong)drawThreadDelay == 0)
+                    {
+                        t.RunSingleFrame();
+
+                        if (encoder.State != VideoEncoder.EncoderState.Running) continue;
+
+                        // Just in case, we wait for the game to do a full frame cycle (I dunno, maybe breaking audio?)
+                        if (wait)
+                        {
+                            wait = false;
+                            continue;
+                        }
+
+                        // Video
+                        var image = renderer.TakeScreenshot();
+                        encoder.SendVideoFrame(image);
+
+                        //todo: do the audio
                     }
                 }
 
