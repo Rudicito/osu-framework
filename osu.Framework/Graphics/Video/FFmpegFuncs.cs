@@ -112,8 +112,6 @@ namespace osu.Framework.Graphics.Video
 
         public delegate int AvcodecParametersFromContextDelegate(AVCodecParameters* par, AVCodecContext* codec);
 
-        public delegate AVFrame* AllocAudioFrameDelegate(AVSampleFormat sample_fmt, ulong channel_layout, int sample_rate, int nb_samples);
-
         public delegate SwrContext* SwrAllocDelegate();
 
         public delegate int AvOptSetIntDelegate(void* obj, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, long val, int search_flags);
@@ -139,6 +137,12 @@ namespace osu.Framework.Graphics.Video
         public delegate int AvioOpenDelegate(AVIOContext** s, [MarshalAs(UnmanagedType.LPUTF8Str)] string filename, int flags);
 
         public delegate SwsContext* SwsGetContextDelegate(int srcW, int srcH, AVPixelFormat srcFormat, int dstW, int dstH, AVPixelFormat dstFormat, int flags, SwsFilter* srcFilter, SwsFilter* dstFilter, double* param);
+
+        public delegate int SwrConvertDelegate(SwrContext* s, byte** @out, int out_count, byte** @in, int in_count);
+
+        public delegate long AvRescaleQ(long a, AVRational bq, AVRational cq);
+
+        public delegate AVCodec* AvcodecFindEncoderDelegate(AVCodecID id);
 
         #endregion
 
@@ -194,7 +198,6 @@ namespace osu.Framework.Graphics.Video
         public SwrFreeDelegate swr_free;
         public AvDictCopyDelegate av_dict_copy;
         public AvcodecParametersFromContextDelegate avcodec_parameters_from_context;
-        public AllocAudioFrameDelegate alloc_audio_frame;
         public SwrAllocDelegate swr_alloc;
         public AvOptSetIntDelegate av_opt_set_int;
         public AvOptSetSampleFmtDelegate av_opt_set_sample_fmt;
@@ -208,6 +211,9 @@ namespace osu.Framework.Graphics.Video
         public AvCodecIsEncoderDelegate av_codec_is_encoder;
         public AvioOpenDelegate avio_open;
         public SwsGetContextDelegate sws_getContext;
+        public SwrConvertDelegate swr_convert;
+        public AvRescaleQ av_rescale_q;
+        public AvcodecFindEncoderDelegate avcodec_find_encoder;
 
         // Touching AutoGen.ffmpeg or its LibraryLoader in any way on non-Desktop platforms
         // will cause it to throw in static constructor, which can't be bypassed.

@@ -3,10 +3,7 @@
 
 using System;
 using FFmpeg.AutoGen;
-using osu.Framework.Allocation;
-using osu.Framework.Graphics.Rendering;
 using osu.Framework.Logging;
-using osu.Framework.Platform;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using Size = System.Drawing.Size;
@@ -18,22 +15,16 @@ namespace osu.Framework.Graphics.Video
     // - encoders: libx264 (video), aac (audio)
     // - muxer: mp4
     /// <remarks>
-    /// Heavily based on https://github.com/FFmpeg/FFmpeg/blob/release/4.3/doc/examples/muxing.c
+    /// Heavily based on https://github.com/FFmpeg/FFmpeg/blob/release/4.3/doc/examples/muxing.c.
+    /// Only works in single thread in mind!
     /// </remarks>
     public unsafe class VideoEncoder : FFmpegComponent, IDisposable
     {
-        [Resolved]
-        private GameHost host { get; set; } = null!;
-
-        [Resolved]
-        private IRenderer renderer { get; set; } = null!;
-
         public int VideoFrameRate { get; init; } = 60;
         public Size VideoSize { get; init; } = new Size(1920, 1080);
 
         public int AudioBitRate { get; init; } = 192000;
         public int AudioSampleRate { get; init; } = 44100;
-        public const AVPixelFormat STREAM_PIX_FMT = AVPixelFormat.AV_PIX_FMT_YUV420P; // default pix_fmt
 
         private AVOutputFormat* fmt;
         private AVFormatContext* oc = null;
@@ -50,6 +41,7 @@ namespace osu.Framework.Graphics.Video
         public const int SCALE_FLAGS = FFmpegFuncs.SWS_BICUBIC;
 
         public EncoderState State = EncoderState.Idle;
+        private byte[]? pixelBuffer;
 
         private struct OutputStream
         {
@@ -60,7 +52,6 @@ namespace osu.Framework.Graphics.Video
             public AVFrame* Frame;
             public AVFrame* TmpFrame;
             public AVPacket* TmpPkt;
-            public float T, Tincr, Tincr2;
             public SwsContext* SwsCtx;
             public SwrContext* SwrCtx;
         }
@@ -132,6 +123,8 @@ namespace osu.Framework.Graphics.Video
             if (c == null)
                 throw new InvalidOperationException("Could not alloc an encoding context");
 
+            ost->TmpPkt = Ffmpeg.av_packet_alloc();
+
             ost->Enc = c;
 
             switch ((*codec)->type)
@@ -186,7 +179,7 @@ namespace osu.Framework.Graphics.Video
                     ost->St->time_base = new AVRational { num = 1, den = VideoFrameRate };
                     c->time_base = ost->St->time_base;
                     c->gop_size = 12; // emit one intra frame every twelve frames at most
-                    c->pix_fmt = AVPixelFormat.AV_PIX_FMT_RGBA;
+                    c->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
 
                     break;
             }
@@ -234,16 +227,10 @@ namespace osu.Framework.Graphics.Video
             if (ret < 0)
                 throw new InvalidOperationException($"Could not open audio codec: {GetErrorMessage(ret)}");
 
-            // init signal generator
-            ost->T = 0;
-            ost->Tincr = (float)(2 * Math.PI * 110.0 / c->sample_rate);
-            // increment frequency by 110 Hz per second
-            ost->Tincr2 = (float)(2 * Math.PI * 110.0 / c->sample_rate / c->sample_rate);
-
             int nbSamples = (c->codec->capabilities & FFmpegFuncs.AV_CODEC_CAP_VARIABLE_FRAME_SIZE) != 0 ? 10000 : c->frame_size;
 
-            ost->Frame = Ffmpeg.alloc_audio_frame(c->sample_fmt, c->channel_layout, c->sample_rate, nbSamples);
-            ost->TmpFrame = Ffmpeg.alloc_audio_frame(AVSampleFormat.AV_SAMPLE_FMT_S16, c->channel_layout, c->sample_rate, nbSamples);
+            ost->Frame = allocAudioFrame(c->sample_fmt, c->channel_layout, c->sample_rate, nbSamples);
+            ost->TmpFrame = allocAudioFrame(AVSampleFormat.AV_SAMPLE_FMT_FLT, c->channel_layout, c->sample_rate, nbSamples);
 
             // copy the stream parameters to the muxer
             ret = Ffmpeg.avcodec_parameters_from_context(ost->St->codecpar, c);
@@ -260,7 +247,7 @@ namespace osu.Framework.Graphics.Video
             // set options
             Ffmpeg.av_opt_set_int(ost->SwrCtx, "in_channel_count", c->channels, 0);
             Ffmpeg.av_opt_set_int(ost->SwrCtx, "in_sample_rate", c->sample_rate, 0);
-            Ffmpeg.av_opt_set_sample_fmt(ost->SwrCtx, "in_sample_fmt", AVSampleFormat.AV_SAMPLE_FMT_S16, 0);
+            Ffmpeg.av_opt_set_sample_fmt(ost->SwrCtx, "in_sample_fmt", AVSampleFormat.AV_SAMPLE_FMT_FLT, 0);
             Ffmpeg.av_opt_set_int(ost->SwrCtx, "out_channel_count", c->channels, 0);
             Ffmpeg.av_opt_set_int(ost->SwrCtx, "out_sample_rate", c->sample_rate, 0);
             Ffmpeg.av_opt_set_sample_fmt(ost->SwrCtx, "out_sample_fmt", c->sample_fmt, 0);
@@ -268,6 +255,49 @@ namespace osu.Framework.Graphics.Video
             // initialize the resampling context
             if (Ffmpeg.swr_init(ost->SwrCtx) < 0)
                 throw new InvalidOperationException("Failed to initialize the resampling context");
+        }
+
+        public void SendAudioFrame(float[] audioData)
+        {
+            writeFrame(oc, audioStream.Enc, audioStream.St, getAudioFrame(audioData), audioStream.TmpPkt);
+        }
+
+        private AVFrame* getAudioFrame(float[] audioData)
+        {
+            if (Ffmpeg.av_frame_make_writable(audioStream.TmpFrame) < 0)
+                throw new InvalidOperationException("Audio temp frame is not writable");
+
+            int expectedSamples = audioStream.TmpFrame->nb_samples * audioStream.Enc->channels;
+            if (audioData.Length != expectedSamples)
+                throw new ArgumentException($"Expected {expectedSamples} samples, got {audioData.Length}");
+
+            fixed (float* src = audioData)
+            {
+                Buffer.MemoryCopy(
+                    src,
+                    audioStream.TmpFrame->data[0],
+                    audioData.Length * sizeof(float),
+                    audioData.Length * sizeof(float)
+                );
+            }
+
+            if (Ffmpeg.av_frame_make_writable(audioStream.Frame) < 0)
+                throw new InvalidOperationException("Audio frame is not writable");
+
+            int ret = Ffmpeg.swr_convert(
+                audioStream.SwrCtx,
+                audioStream.Frame->extended_data,
+                audioStream.Frame->nb_samples,
+                audioStream.TmpFrame->extended_data,
+                audioStream.TmpFrame->nb_samples
+            );
+
+            if (ret < 0)
+                throw new InvalidOperationException("Could not convert the audio frame");
+
+            audioStream.Frame->pts = Ffmpeg.av_rescale_q(audioStream.SamplesCount, new AVRational { num = 1, den = audioStream.Enc->sample_rate }, audioStream.Enc->time_base);
+            audioStream.SamplesCount += audioStream.Frame->nb_samples;
+            return audioStream.Frame;
         }
 
         #endregion
@@ -316,79 +346,50 @@ namespace osu.Framework.Graphics.Video
             if (ost->Frame == null)
                 throw new InvalidOperationException("Could not allocate video frame");
 
-            // If the output format is not YUV420P, then a temporary YUV420P
-            // picture is needed too. It is then converted to the required
-            // output format.
-            ost->TmpFrame = null;
-
-            if (c->pix_fmt != AVPixelFormat.AV_PIX_FMT_YUV420P)
-            {
-                ost->TmpFrame = allocVideoFrame(AVPixelFormat.AV_PIX_FMT_YUV420P, c->width, c->height);
-
-                if (ost->TmpFrame == null)
-                    //todo: free ost->Frame?
-                    throw new InvalidOperationException("Could not allocate temporary video frame\n");
-            }
-
             // copy the stream parameters to the muxer
             ret = Ffmpeg.avcodec_parameters_from_context(ost->St->codecpar, c);
 
             if (ret < 0)
                 throw new InvalidOperationException("Could not copy the stream parameters");
 
-            ost->SwsCtx = ffmpeg.sws_getContext(c->width, c->height,
+            ost->SwsCtx = Ffmpeg.sws_getContext(c->width, c->height,
                 AVPixelFormat.AV_PIX_FMT_RGBA,
                 c->width, c->height,
                 c->pix_fmt,
                 SCALE_FLAGS, null, null, null);
         }
 
-        private void writeVideoFrame(Image<Rgba32> image)
+        public void SendVideoFrame(Image<Rgba32> image)
         {
             writeFrame(oc, videoStream.Enc, videoStream.St, getVideoFrame(image), videoStream.TmpPkt);
         }
 
         private AVFrame* getVideoFrame(Image<Rgba32> img)
         {
-            AVCodecContext* c = videoStream.Enc;
-
             if (Ffmpeg.av_frame_make_writable(videoStream.Frame) < 0)
                 throw new InvalidOperationException("Video frame is not writable");
 
-            if (Ffmpeg.av_frame_make_writable(videoStream.TmpFrame) < 0)
-                throw new InvalidOperationException("Temporary video frame is not writable");
-
-            // Convert Image<Rgba32> to AVFrame Rgba32
-            img.ProcessPixelRows(accessor =>
+            if (pixelBuffer == null)
             {
-                for (int y = 0; y < accessor.Height; y++)
-                {
-                    Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
+                int totalBytes = videoStream.Enc->width * videoStream.Enc->height * 4;
+                pixelBuffer = new byte[totalBytes];
+            }
 
-                    byte* rowDst = videoStream.TmpFrame->data[0] + y * videoStream.TmpFrame->linesize[0];
+            img.CopyPixelDataTo(pixelBuffer);
 
-                    fixed (Rgba32* rowSrc = pixelRow)
-                    {
-                        Buffer.MemoryCopy(
-                            rowSrc,
-                            rowDst,
-                            videoStream.TmpFrame->linesize[0],
-                            img.Width * sizeof(Rgba32)
-                        );
-                    }
-                }
-            });
-
-            // Convert AVFrame Rgba32 to AVFrame yuv
-            Ffmpeg.sws_scale(
-                videoStream.SwsCtx,
-                videoStream.TmpFrame->data,
-                videoStream.TmpFrame->linesize,
-                0,
-                c->height,
-                videoStream.Frame->data,
-                videoStream.Frame->linesize
-            );
+            fixed (byte* p = pixelBuffer)
+            {
+                byte*[] srcSlice = [p, null, null, null];
+                int[] srcStride = [videoStream.Enc->width * 4, 0, 0, 0];
+                Ffmpeg.sws_scale(videoStream.SwsCtx,
+                    srcSlice,
+                    srcStride,
+                    0,
+                    videoStream.Enc->height,
+                    videoStream.Frame->data,
+                    videoStream.Frame->linesize
+                );
+            }
 
             videoStream.Frame->pts = videoStream.NextPts++;
 
@@ -404,12 +405,12 @@ namespace osu.Framework.Graphics.Video
             Ffmpeg.av_frame_free(&ost->TmpFrame);
             Ffmpeg.sws_freeContext(ost->SwsCtx);
             Ffmpeg.swr_free(&ost->SwrCtx);
-            //todo: don't forget TmpPkt
+            Ffmpeg.av_packet_free(&ost->TmpPkt);
         }
 
         // sws_scale for colour changes
 
-        public void prepareRecording()
+        private void prepareRecording(string filename)
         {
             int ret;
             AVDictionary* opt = null;
@@ -477,26 +478,29 @@ namespace osu.Framework.Graphics.Video
 
             try
             {
-                prepareRecording();
-                addSchedule();
+                prepareRecording(filename);
+                State = EncoderState.Running;
             }
             catch (Exception e)
             {
-                Console.WriteLine(e);
+                State = EncoderState.Idle;
+                Logger.Log(e.Message);
                 throw;
             }
         }
 
-        private void addSchedule()
-        {
-            host.DrawThread.Scheduler.AddDelayed(() =>
-            {
-                var image = renderer.TakeScreenshot();
-                writeVideoFrame(image);
-
-                //todo: call writeAudioFrame here when ready
-            }, 0, true);
-        }
+        // private void addSchedule()
+        // {
+        //     if (drawDelegate != null) return;
+        //
+        //     drawDelegate = host.DrawThread.Scheduler.AddDelayed(() =>
+        //     {
+        //         var image = renderer.TakeScreenshot();
+        //         SendVideoFrame(image);
+        //
+        //         //todo: call writeAudioFrame here when ready
+        //     }, 0, true);
+        // }
 
         public void StopRecording()
         {
