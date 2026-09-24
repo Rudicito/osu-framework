@@ -25,7 +25,14 @@ FFMPEG_FLAGS=(
     --enable-demuxer='mov,matroska' # mov = mp4, matroska = mkv & webm
     --enable-parser='h264,hevc,vp8,vp9'
     --enable-decoder='h264,hevc,vp8,vp9'
-    --enable-protocol=pipe
+
+    # Encoding (webm, mkv)
+    --enable-libvpx
+    --enable-libopus
+    --enable-swresample
+    --enable-encoder='libvpx_vp9,libopus'
+    --enable-muxer=matroska
+    --enable-protocol='pipe,file'
 )
 
 function prep_ffmpeg() {
