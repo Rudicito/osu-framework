@@ -6,6 +6,8 @@ SCRIPT_PATH=$(pwd)
 popd > /dev/null
 source "$SCRIPT_PATH/common.sh"
 
+brew install pkg-config autoconf automake libtool
+
 if [ -z "${arch-}" ]; then
     PS3='Build for which arch? '
     select arch in "arm64" "x86_64"; do

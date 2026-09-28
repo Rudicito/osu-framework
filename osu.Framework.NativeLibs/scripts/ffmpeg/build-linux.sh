@@ -6,6 +6,9 @@ SCRIPT_PATH=$(pwd)
 popd > /dev/null
 source "$SCRIPT_PATH/common.sh"
 
+sudo apt-get update
+sudo apt-get install -y pkg-config autoconf automake libtool git
+
 FFMPEG_FLAGS+=(
     # --enable-vaapi
     # --enable-vdpau
