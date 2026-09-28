@@ -19,23 +19,35 @@ fi
 
 cross_arch=''
 cross_prefix=''
+vpx_target=''
 
 case $arch in
     x86)
         cross_arch='x86'
         cross_prefix='i686-w64-mingw32-'
+        vpx_target='x86-win32-gcc'
         ;;
 
     x64)
         cross_arch='x86_64'
         cross_prefix='x86_64-w64-mingw32-'
+        vpx_target='x86_64-win64-gcc'
         ;;
 
     arm64)
         cross_arch='aarch64'
         cross_prefix='aarch64-w64-mingw32-'
+        vpx_target='arm64-win64-gcc'
         ;;
 esac
+
+# Dependencies (opus, libvpx) built statically for the same target
+DEPS_HOST="${cross_prefix%-}"   # e.g. x86_64-w64-mingw32
+VPX_TARGET="$vpx_target"
+VPX_CROSS="$cross_prefix"
+VPX_EXTRA_ARGS=""
+DEPS_CFLAGS=""
+build_deps "win-$arch"
 
 FFMPEG_FLAGS+=(
     --enable-w32threads

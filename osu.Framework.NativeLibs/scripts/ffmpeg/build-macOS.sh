@@ -17,6 +17,20 @@ if [ -z "${arch-}" ]; then
     done
 fi
 
+# Dependencies (opus, libvpx) built statically for the same target
+darwin="$(uname -r | cut -d. -f1)"   # e.g. 23 on macOS 14
+if [ "$arch" = "x86_64" ]; then
+    DEPS_HOST="x86_64-apple-darwin"
+    VPX_TARGET="x86_64-darwin${darwin}-gcc"
+else
+    DEPS_HOST="aarch64-apple-darwin"
+    VPX_TARGET="arm64-darwin${darwin}-gcc"
+fi
+VPX_CROSS=""
+VPX_EXTRA_ARGS=""
+DEPS_CFLAGS="-arch $arch"
+build_deps "macOS-$arch"
+
 FFMPEG_FLAGS+=(
     --enable-videotoolbox
     --enable-hwaccel=h264_videotoolbox

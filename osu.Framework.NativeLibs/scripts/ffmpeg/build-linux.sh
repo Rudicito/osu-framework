@@ -17,6 +17,14 @@ FFMPEG_FLAGS+=(
     --target-os=linux
 )
 
+# Dependencies (opus, libvpx): native build, PIC because they get linked into .so files
+DEPS_HOST=""
+VPX_TARGET="x86_64-linux-gcc"
+VPX_CROSS=""
+VPX_EXTRA_ARGS="--enable-pic"
+DEPS_CFLAGS="-fPIC"
+build_deps linux-x64
+
 pushd . > /dev/null
 prep_ffmpeg linux-x64
 # Apply patch from upstream to fix errors with new binutils versions:
